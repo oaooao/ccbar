@@ -1,0 +1,65 @@
+version: 2
+
+project_name: ccbar
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ccbar
+    main: .
+    binary: ccbar
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+archives:
+  - id: ccbar
+    builds:
+      - ccbar
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    files:
+      - README*
+      - LICENSE*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+brews:
+  - name: ccbar
+    repository:
+      owner: oaooao
+      name: homebrew-tap
+    homepage: "https://github.com/oaooao/ccbar"
+    description: "A beautifully designed status line for Claude Code"
+    install: |
+      bin.install "ccbar"
+
+release:
+  github:
+    owner: oaooao
+    name: ccbar
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"

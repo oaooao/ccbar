@@ -1,10 +1,12 @@
+<p align="right">
+  <a href="README.md">English</a> | <strong>中文</strong>
+</p>
+
 # ccbar
 
 为 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 设计的高颜值状态栏。
 
 单二进制，零依赖，~60ms 启动。Go 编写。
-
-[English](README.md)
 
 ### 正常状态
 

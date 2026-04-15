@@ -11,6 +11,25 @@ import (
 )
 
 func main() {
+	// Parse --theme flag
+	for i, arg := range os.Args[1:] {
+		if arg == "--theme" && i+1 < len(os.Args)-1 {
+			switch os.Args[i+2] {
+			case "light":
+				th = lightTheme
+			case "dark":
+				th = darkTheme
+			}
+		} else if arg == "--theme=light" {
+			th = lightTheme
+		} else if arg == "--theme=dark" {
+			th = darkTheme
+		} else if arg == "--version" {
+			fmt.Println(formatVersion())
+			return
+		}
+	}
+
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil || len(input) == 0 {
 		return
@@ -58,29 +77,31 @@ func main() {
 	config := getConfigStats(cwd, sessionID)
 	fiveHour, sevenDay := resolveRateLimits(&data)
 
+	sep := sepStr()
+
 	// ── Line 1: Identity ────────────────────────────────────────────────────
 
 	var line1Parts []string
 
 	// Model
 	if isDefaultModel {
-		line1Parts = append(line1Parts, cyan+modelName+reset)
+		line1Parts = append(line1Parts, th.Cyan+modelName+th.Reset)
 	} else {
-		line1Parts = append(line1Parts, boldYellow+strings.ToUpper(modelName)+reset)
+		line1Parts = append(line1Parts, th.BoldYellow+strings.ToUpper(modelName)+th.Reset)
 	}
 
 	// Project
-	line1Parts = append(line1Parts, boldWhite+projectName+reset)
+	line1Parts = append(line1Parts, th.BoldWhite+projectName+th.Reset)
 
 	// Branch with ⎇ icon
 	if gitInfo != nil && gitInfo.Branch != "" {
-		branchStr := muted + "⎇" + reset + " " + magenta + gitInfo.Branch + reset
+		branchStr := th.Muted + "⎇" + th.Reset + " " + th.Magenta + gitInfo.Branch + th.Reset
 		var dirty []string
 		if gitInfo.Staged > 0 {
-			dirty = append(dirty, green+fmt.Sprintf("+%d", gitInfo.Staged)+reset)
+			dirty = append(dirty, th.Green+fmt.Sprintf("+%d", gitInfo.Staged)+th.Reset)
 		}
 		if gitInfo.Modified > 0 {
-			dirty = append(dirty, yellow+fmt.Sprintf("~%d", gitInfo.Modified)+reset)
+			dirty = append(dirty, th.Yellow+fmt.Sprintf("~%d", gitInfo.Modified)+th.Reset)
 		}
 		if len(dirty) > 0 {
 			branchStr += " " + strings.Join(dirty, " ")
@@ -89,22 +110,23 @@ func main() {
 	}
 
 	// Cost + Duration
-	line1Parts = append(line1Parts, secondary+fmt.Sprintf("$%.2f", cost)+reset)
-	line1Parts = append(line1Parts, secondary+formatDuration(durationMs)+reset)
+	line1Parts = append(line1Parts, th.Secondary+fmt.Sprintf("$%.2f", cost)+th.Reset)
+	line1Parts = append(line1Parts, th.Secondary+formatDuration(durationMs)+th.Reset)
 
 	fmt.Println(" " + strings.Join(line1Parts, sep))
 
 	// ── Line 2: Config Stats ────────────────────────────────────────────────
 
+	cfgSep := cfgSepStr()
 	var cfgParts []string
 	if config.ClaudeMdCount > 0 {
-		cfgParts = append(cfgParts, muted+fmt.Sprintf("%d memory files", config.ClaudeMdCount)+reset)
+		cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d memory files", config.ClaudeMdCount)+th.Reset)
 	}
 	if config.McpCount > 0 {
-		cfgParts = append(cfgParts, muted+fmt.Sprintf("%d mcp", config.McpCount)+reset)
+		cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d mcp", config.McpCount)+th.Reset)
 	}
 	if config.HooksCount > 0 {
-		cfgParts = append(cfgParts, muted+fmt.Sprintf("%d hooks", config.HooksCount)+reset)
+		cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d hooks", config.HooksCount)+th.Reset)
 	}
 	fmt.Println(" " + strings.Join(cfgParts, cfgSep))
 
@@ -113,31 +135,31 @@ func main() {
 	fmt.Printf(" %s  %s %s%s%s\n",
 		label("context"),
 		contextBar(pct, ctxBarW),
-		pctColor(pct), padPct(pct), reset)
+		pctColor(pct), padPct(pct), th.Reset)
 
 	// ── Line 4: 5h Rate Limit ───────────────────────────────────────────────
 
 	if fiveHour != nil {
 		fhPct := int(math.Round(fiveHour.Percentage))
-		resetStr := secondary + "⟳ " + formatResetTime(fiveHour.ResetsAt) + reset
+		resetStr := th.Secondary + "⟳ " + formatResetTime(fiveHour.ResetsAt) + th.Reset
 		fmt.Printf(" %s  %s %s%s%s  %s\n",
 			label("5h"), rateBar(fhPct, rateBarW),
-			pctColor(fhPct), padPct(fhPct), reset, resetStr)
+			pctColor(fhPct), padPct(fhPct), th.Reset, resetStr)
 	} else {
 		fmt.Printf(" %s  %s %s  —%s\n",
-			label("5h"), rateBar(0, rateBarW), muted, reset)
+			label("5h"), rateBar(0, rateBarW), th.Muted, th.Reset)
 	}
 
 	// ── Line 5: 7d Rate Limit ───────────────────────────────────────────────
 
 	if sevenDay != nil {
 		sdPct := int(math.Round(sevenDay.Percentage))
-		resetStr := secondary + "⟳ " + formatResetDateTime(sevenDay.ResetsAt) + reset
+		resetStr := th.Secondary + "⟳ " + formatResetDateTime(sevenDay.ResetsAt) + th.Reset
 		fmt.Printf(" %s  %s %s%s%s  %s\n",
 			label("weekly"), rateBar(sdPct, rateBarW),
-			pctColor(sdPct), padPct(sdPct), reset, resetStr)
+			pctColor(sdPct), padPct(sdPct), th.Reset, resetStr)
 	} else {
 		fmt.Printf(" %s  %s %s  —%s\n",
-			label("weekly"), rateBar(0, rateBarW), muted, reset)
+			label("weekly"), rateBar(0, rateBarW), th.Muted, th.Reset)
 	}
 }

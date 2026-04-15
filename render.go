@@ -2,38 +2,81 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
 
-// ANSI color constants.
-const (
-	reset      = "\x1b[0m"
-	bold       = "\x1b[1m"
-	white      = "\x1b[37m"
-	boldWhite  = "\x1b[1;37m"
-	cyan       = "\x1b[36m"
-	green      = "\x1b[32m"
-	yellow     = "\x1b[33m"
-	red        = "\x1b[31m"
-	boldRed    = "\x1b[1;31m"
-	boldYellow = "\x1b[1;33m"
-	magenta    = "\x1b[38;5;141m"
-	brightBlue = "\x1b[38;5;75m"
+// Theme holds all ANSI color codes for a specific background.
+type Theme struct {
+	Reset      string
+	Bold       string
+	White      string
+	BoldWhite  string
+	Cyan       string
+	Green      string
+	Yellow     string
+	Red        string
+	BoldRed    string
+	BoldYellow string
+	Magenta    string
+	BrightBlue string
+	Text       string
+	Secondary  string
+	Muted      string
+	BarEmpty   string
+}
 
-	text      = "\x1b[38;5;252m"
-	secondary = "\x1b[38;5;246m"
-	muted     = "\x1b[38;5;243m"
-	barEmpty  = "\x1b[38;5;242m"
-)
+var darkTheme = Theme{
+	Reset:      "\x1b[0m",
+	Bold:       "\x1b[1m",
+	White:      "\x1b[37m",
+	BoldWhite:  "\x1b[1;37m",
+	Cyan:       "\x1b[36m",
+	Green:      "\x1b[32m",
+	Yellow:     "\x1b[33m",
+	Red:        "\x1b[31m",
+	BoldRed:    "\x1b[1;31m",
+	BoldYellow: "\x1b[1;33m",
+	Magenta:    "\x1b[38;5;141m",
+	BrightBlue: "\x1b[38;5;75m",
+	Text:       "\x1b[38;5;252m",
+	Secondary:  "\x1b[38;5;246m",
+	Muted:      "\x1b[38;5;243m",
+	BarEmpty:   "\x1b[38;5;242m",
+}
+
+var lightTheme = Theme{
+	Reset:      "\x1b[0m",
+	Bold:       "\x1b[1m",
+	White:      "\x1b[30m",          // black text on light bg
+	BoldWhite:  "\x1b[1;30m",       // bold black
+	Cyan:       "\x1b[38;5;30m",    // darker cyan
+	Green:      "\x1b[38;5;28m",    // darker green
+	Yellow:     "\x1b[38;5;130m",   // dark orange/amber
+	Red:        "\x1b[38;5;160m",   // darker red
+	BoldRed:    "\x1b[1;38;5;160m",
+	BoldYellow: "\x1b[1;38;5;130m",
+	Magenta:    "\x1b[38;5;90m",    // darker purple
+	BrightBlue: "\x1b[38;5;26m",   // darker blue
+	Text:       "\x1b[38;5;60m",    // dark gray for primary text
+	Secondary:  "\x1b[38;5;100m",   // medium gray
+	Muted:      "\x1b[38;5;130m",   // lighter muted
+	BarEmpty:   "\x1b[38;5;188m",   // light gray for empty bars
+}
+
+// Active theme — set in main() based on --theme flag.
+var th = darkTheme
 
 const (
-	sep     = " " + muted + "│" + reset + " "
-	cfgSep  = " " + muted + "·" + reset + " "
-	labelW  = 7
-	ctxBarW = 40
+	labelW   = 7
+	ctxBarW  = 40
 	rateBarW = 30
 )
+
+// Computed separators (depend on theme, call after theme is set).
+func sepStr() string    { return " " + th.Muted + "│" + th.Reset + " " }
+func cfgSepStr() string { return " " + th.Muted + "·" + th.Reset + " " }
 
 // contextBar renders a context window progress bar.
 func contextBar(pct, width int) string {
@@ -46,14 +89,14 @@ func contextBar(pct, width int) string {
 	var color string
 	switch {
 	case pct >= 80:
-		color = red
+		color = th.Red
 	case pct >= 60:
-		color = yellow
+		color = th.Yellow
 	default:
-		color = cyan
+		color = th.Cyan
 	}
 
-	return color + strings.Repeat("━", filled) + barEmpty + strings.Repeat("━", empty) + reset
+	return color + strings.Repeat("━", filled) + th.BarEmpty + strings.Repeat("━", empty) + th.Reset
 }
 
 // rateBar renders a rate limit progress bar.
@@ -67,25 +110,25 @@ func rateBar(pct, width int) string {
 	var filledColor string
 	switch {
 	case pct >= 80:
-		filledColor = red
+		filledColor = th.Red
 	case pct >= 60:
-		filledColor = yellow
+		filledColor = th.Yellow
 	default:
-		filledColor = brightBlue
+		filledColor = th.BrightBlue
 	}
 
-	return filledColor + strings.Repeat("▰", filled) + barEmpty + strings.Repeat("▱", empty) + reset
+	return filledColor + strings.Repeat("▰", filled) + th.BarEmpty + strings.Repeat("▱", empty) + th.Reset
 }
 
 // pctColor returns the color for a percentage value.
 func pctColor(pct int) string {
 	switch {
 	case pct >= 80:
-		return boldRed
+		return th.BoldRed
 	case pct >= 60:
-		return yellow
+		return th.Yellow
 	default:
-		return text
+		return th.Text
 	}
 }
 
@@ -97,9 +140,9 @@ func padPct(pct int) string {
 // label pads a string to labelW characters.
 func label(s string) string {
 	if len(s) >= labelW {
-		return text + s + reset
+		return th.Text + s + th.Reset
 	}
-	return text + s + strings.Repeat(" ", labelW-len(s)) + reset
+	return th.Text + s + strings.Repeat(" ", labelW-len(s)) + th.Reset
 }
 
 // formatDuration formats milliseconds into a human-readable duration.
@@ -116,8 +159,24 @@ func formatDuration(ms float64) string {
 	return fmt.Sprintf("%dm", mins)
 }
 
-// formatResetTime formats a time as "1:00pm".
+// ─── Locale-aware date/time formatting ───────────────────────────────────────
+
+// isZhLocale checks if the system locale is Chinese.
+func isZhLocale() bool {
+	for _, key := range []string{"LANG", "LC_TIME", "LC_ALL", "LANGUAGE"} {
+		if v := os.Getenv(key); strings.HasPrefix(v, "zh") {
+			return true
+		}
+	}
+	return false
+}
+
+// formatResetTime formats a time for the 5h rate limit.
+// zh: "15:00"   en: "3:00pm"
 func formatResetTime(t time.Time) string {
+	if isZhLocale() {
+		return fmt.Sprintf("%d:%02d", t.Hour(), t.Minute())
+	}
 	h := t.Hour()
 	m := t.Minute()
 	ampm := "am"
@@ -131,8 +190,12 @@ func formatResetTime(t time.Time) string {
 	return fmt.Sprintf("%d:%02d%s", h12, m, ampm)
 }
 
-// formatResetDateTime formats a time as "Apr 18, 4:00am".
+// formatResetDateTime formats a time for the 7d rate limit.
+// zh: "4/18 15:00"   en: "Apr 18, 3:00pm"
 func formatResetDateTime(t time.Time) string {
+	if isZhLocale() {
+		return fmt.Sprintf("%d/%d %d:%02d", t.Month(), t.Day(), t.Hour(), t.Minute())
+	}
 	months := []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
 	h := t.Hour()
 	m := t.Minute()

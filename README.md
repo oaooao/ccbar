@@ -34,6 +34,8 @@ Single binary, zero dependencies, ~60ms startup. Built with Go.
 - **Smart caching** — Git info cached 5s, config stats cached per session, OAuth cached 60s with stale-while-revalidate
 - **Color-coded alerts** — Bars shift from calm (cyan/blue) → warning (yellow) → critical (red) as resources deplete
 - **Zero dependencies** — Single Go binary, no runtime needed
+- **Light & dark themes** — Optimized color palettes for both terminal backgrounds
+- **Locale-aware dates** — Automatically uses 24h format and `4/18` style dates for Chinese locales, 12h AM/PM and `Apr 18` for others
 
 ## Install
 
@@ -69,6 +71,20 @@ Add this to your Claude Code settings (`~/.claude/settings.json`):
 ```
 
 Restart Claude Code. The status line appears at the bottom after your first interaction.
+
+### Light theme
+
+If you use a light terminal background, add `--theme light`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "ccbar --theme light",
+    "refreshInterval": 3
+  }
+}
+```
 
 ## Update
 

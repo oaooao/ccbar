@@ -34,6 +34,8 @@
 - **智能缓存** — Git 信息 5 秒缓存，配置统计按 session 缓存，OAuth 60 秒缓存 + stale-while-revalidate
 - **颜色预警** — 进度条随资源消耗自动变色：正常（青/蓝）→ 警告（黄）→ 危险（红）
 - **零依赖** — 单个 Go 二进制，不需要任何运行时环境
+- **深色/浅色主题** — 针对深色和浅色终端背景分别优化了配色方案
+- **日期本地化** — 中文环境自动使用 24 小时制和 `4/18` 格式，英文环境使用 12 小时制和 `Apr 18` 格式
 
 ## 安装
 
@@ -69,6 +71,20 @@ go install github.com/oaooao/ccbar@latest
 ```
 
 重启 Claude Code 即可生效。
+
+### 浅色主题
+
+如果你使用浅色终端背景，添加 `--theme light` 参数：
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "ccbar --theme light",
+    "refreshInterval": 3
+  }
+}
+```
 
 ## 更新
 

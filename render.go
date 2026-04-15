@@ -25,6 +25,7 @@ type Theme struct {
 	Secondary  string
 	Muted      string
 	BarEmpty   string
+	Label      string // gauge labels: context, 5h, weekly
 }
 
 var darkTheme = Theme{
@@ -44,6 +45,7 @@ var darkTheme = Theme{
 	Secondary:  "\x1b[38;5;246m",
 	Muted:      "\x1b[38;5;243m",
 	BarEmpty:   "\x1b[38;5;242m",
+	Label:      "\x1b[38;5;252m",  // same as Text in dark theme
 }
 
 var lightTheme = Theme{
@@ -59,10 +61,11 @@ var lightTheme = Theme{
 	BoldYellow: "\x1b[1;38;5;130m",
 	Magenta:    "\x1b[38;5;90m",    // darker purple
 	BrightBlue: "\x1b[38;5;26m",   // darker blue
-	Text:       "\x1b[38;5;60m",    // dark gray for primary text
-	Secondary:  "\x1b[38;5;100m",   // medium gray
-	Muted:      "\x1b[38;5;130m",   // lighter muted
-	BarEmpty:   "\x1b[38;5;188m",   // light gray for empty bars
+	Text:       "\x1b[38;5;241m",   // percentage numbers — readable but lighter than labels
+	Secondary:  "\x1b[38;5;244m",   // reset times — tertiary info
+	Muted:      "\x1b[38;5;248m",   // config stats, separators
+	BarEmpty:   "\x1b[38;5;253m",   // empty bar portions — subtle but visible
+	Label:      "\x1b[1;38;5;238m", // bold dark — anchors the row like a table header
 }
 
 // Active theme — set in main() based on --theme flag.
@@ -137,12 +140,12 @@ func padPct(pct int) string {
 	return fmt.Sprintf("%3d%%", pct)
 }
 
-// label pads a string to labelW characters.
+// label pads a string to labelW characters with label-specific styling.
 func label(s string) string {
 	if len(s) >= labelW {
-		return th.Text + s + th.Reset
+		return th.Label + s + th.Reset
 	}
-	return th.Text + s + strings.Repeat(" ", labelW-len(s)) + th.Reset
+	return th.Label + s + strings.Repeat(" ", labelW-len(s)) + th.Reset
 }
 
 // formatDuration formats milliseconds into a human-readable duration.

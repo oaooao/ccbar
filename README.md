@@ -4,6 +4,8 @@ A beautifully designed status line for [Claude Code](https://docs.anthropic.com/
 
 Single binary, zero dependencies, ~60ms startup. Built with Go.
 
+[中文文档](README_CN.md)
+
 ### Normal — everything healthy
 
 ![Normal state](assets/normal.png)

@@ -51,6 +51,7 @@ brews:
     repository:
       owner: oaooao
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/oaooao/ccbar"
     description: "A beautifully designed status line for Claude Code"
     install: |

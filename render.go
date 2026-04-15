@@ -65,7 +65,7 @@ var lightTheme = Theme{
 	Secondary:  "\x1b[38;5;244m",   // reset times — tertiary info
 	Muted:      "\x1b[38;5;248m",   // config stats, separators
 	BarEmpty:   "\x1b[38;5;253m",   // empty bar portions — subtle but visible
-	Label:      "\x1b[1;38;5;238m", // bold dark — anchors the row like a table header
+	Label:      "\x1b[38;5;244m",   // medium gray — visible but not heavy
 }
 
 // Active theme — set in main() based on --theme flag.

@@ -119,9 +119,42 @@ ccbar setup
 | `--locale en` | `3:00pm` | `Apr 18, 3:00pm` |
 | *（默认）* | 跟随系统 | |
 
-### 隐藏部分
+### 模块化显示
 
-隐藏不需要的显示区域：
+状态栏的每个部分都是独立模块，可通过 `--hide` 自由控制显隐：
+
+| 模块 | 控制内容 |
+|------|---------|
+| `model` | 模型名称（如 `Opus 4.6`） |
+| `project` | 项目目录名 |
+| `branch` | Git 分支 + staged/modified 数量 |
+| `cost` | Session 费用 |
+| `duration` | Session 时长 |
+| `memory` | CLAUDE.md 文件数 |
+| `mcp` | MCP 服务数 |
+| `hooks` | Hook 数量 |
+| `context` | Context 窗口进度条 |
+| `5h` | 5 小时 rate limit 进度条 |
+| `weekly` | 7 天 rate limit 进度条 |
+| `config` | 快捷方式，等同于 `memory,mcp,hooks` |
+
+示例：
+
+```bash
+# 隐藏两个 rate limit 栏
+ccbar --hide 5h,weekly
+
+# 极简模式：只显示身份行 + context 进度条
+ccbar --hide config,5h,weekly
+
+# 隐藏身份行中的费用和时长
+ccbar --hide cost,duration
+
+# 只显示 MCP 数量，隐藏其他配置统计
+ccbar --hide memory,hooks
+```
+
+在 `settings.json` 中使用：
 
 ```json
 {
@@ -132,8 +165,6 @@ ccbar setup
   }
 }
 ```
-
-可隐藏的区域：`config`、`context`、`5h`、`weekly`
 
 所有参数可以组合使用：`ccbar --theme light --locale zh --hide config`
 

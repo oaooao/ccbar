@@ -119,9 +119,42 @@ Date and time format is auto-detected from your system `LANG` environment variab
 | `--locale zh` | `15:00` | `4/18 15:00` |
 | *(default)* | auto-detect from system | |
 
-### Hide sections
+### Hide modules
 
-Hide any section you don't need:
+Every part of the status line is a module you can independently show or hide with `--hide`:
+
+| Module | What it controls |
+|--------|-----------------|
+| `model` | Model name (e.g. `Opus 4.6`) |
+| `project` | Project directory name |
+| `branch` | Git branch + staged/modified counts |
+| `cost` | Session cost |
+| `duration` | Session duration |
+| `memory` | CLAUDE.md file count |
+| `mcp` | MCP server count |
+| `hooks` | Hook count |
+| `context` | Context window progress bar |
+| `5h` | 5-hour rate limit bar |
+| `weekly` | 7-day rate limit bar |
+| `config` | Shortcut for `memory,mcp,hooks` |
+
+Examples:
+
+```bash
+# Hide both rate limit bars
+ccbar --hide 5h,weekly
+
+# Minimal: just identity + context bar
+ccbar --hide config,5h,weekly
+
+# Hide cost and duration from the identity line
+ccbar --hide cost,duration
+
+# Only show MCP count, hide other config stats
+ccbar --hide memory,hooks
+```
+
+In `settings.json`:
 
 ```json
 {
@@ -132,8 +165,6 @@ Hide any section you don't need:
   }
 }
 ```
-
-Available sections: `config`, `context`, `5h`, `weekly`
 
 All flags can be combined: `ccbar --theme light --locale zh --hide config`
 

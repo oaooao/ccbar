@@ -68,9 +68,16 @@ func applyLocale(v string) {
 }
 
 func applyHide(v string) {
+	aliases := map[string][]string{
+		"config": {"memory", "mcp", "hooks"},
+	}
 	for _, s := range strings.Split(v, ",") {
 		s = strings.TrimSpace(s)
-		if s != "" {
+		if expanded, ok := aliases[s]; ok {
+			for _, e := range expanded {
+				hiddenSections[e] = true
+			}
+		} else if s != "" {
 			hiddenSections[s] = true
 		}
 	}
@@ -90,14 +97,23 @@ Usage:
 Flags:
   --theme <dark|light>   Set color theme (default: dark)
   --locale <en|zh>       Set date format (default: auto-detect from system)
-  --hide <sections>      Hide sections, comma-separated: config,context,5h,weekly
+  --hide <modules>       Hide modules, comma-separated (see below)
   --version              Print version
   --help                 Print this help
+
+Modules (all visible by default):
+  model      Model name              project    Project directory
+  branch     Git branch + changes    cost       Session cost
+  duration   Session duration        memory     CLAUDE.md file count
+  mcp        MCP server count        hooks      Hook count
+  context    Context window bar      5h         5-hour rate limit
+  weekly     7-day rate limit        config     Shortcut for memory,mcp,hooks
 
 Examples:
   ccbar --theme light
   ccbar --hide 5h,weekly
-  ccbar --theme light --locale zh --hide config`)
+  ccbar --hide cost,duration,config
+  ccbar --theme light --locale zh --hide mcp,hooks`)
 }
 
 func main() {
@@ -152,19 +168,23 @@ func main() {
 
 	sep := sepStr()
 
-	// ── Line 1: Identity (always visible) ───────────────────────────────────
+	// ── Line 1: Identity ────────────────────────────────────────────────────
 
 	var line1Parts []string
 
-	if isDefaultModel {
-		line1Parts = append(line1Parts, th.Cyan+modelName+th.Reset)
-	} else {
-		line1Parts = append(line1Parts, th.BoldYellow+strings.ToUpper(modelName)+th.Reset)
+	if isVisible("model") {
+		if isDefaultModel {
+			line1Parts = append(line1Parts, th.Cyan+modelName+th.Reset)
+		} else {
+			line1Parts = append(line1Parts, th.BoldYellow+strings.ToUpper(modelName)+th.Reset)
+		}
 	}
 
-	line1Parts = append(line1Parts, th.BoldWhite+projectName+th.Reset)
+	if isVisible("project") {
+		line1Parts = append(line1Parts, th.BoldWhite+projectName+th.Reset)
+	}
 
-	if gitInfo != nil && gitInfo.Branch != "" {
+	if isVisible("branch") && gitInfo != nil && gitInfo.Branch != "" {
 		branchStr := th.Muted + "⎇" + th.Reset + " " + th.Magenta + gitInfo.Branch + th.Reset
 		var dirty []string
 		if gitInfo.Staged > 0 {
@@ -179,28 +199,33 @@ func main() {
 		line1Parts = append(line1Parts, branchStr)
 	}
 
-	line1Parts = append(line1Parts, th.Secondary+fmt.Sprintf("$%.2f", cost)+th.Reset)
-	line1Parts = append(line1Parts, th.Secondary+formatDuration(durationMs)+th.Reset)
+	if isVisible("cost") {
+		line1Parts = append(line1Parts, th.Secondary+fmt.Sprintf("$%.2f", cost)+th.Reset)
+	}
 
-	fmt.Println(" " + strings.Join(line1Parts, sep))
+	if isVisible("duration") {
+		line1Parts = append(line1Parts, th.Secondary+formatDuration(durationMs)+th.Reset)
+	}
+
+	if len(line1Parts) > 0 {
+		fmt.Println(" " + strings.Join(line1Parts, sep))
+	}
 
 	// ── Line 2: Config Stats ────────────────────────────────────────────────
 
-	if isVisible("config") {
-		cfgSep := cfgSepStr()
-		var cfgParts []string
-		if config.ClaudeMdCount > 0 {
-			cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d memory files", config.ClaudeMdCount)+th.Reset)
-		}
-		if config.McpCount > 0 {
-			cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d mcp", config.McpCount)+th.Reset)
-		}
-		if config.HooksCount > 0 {
-			cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d hooks", config.HooksCount)+th.Reset)
-		}
-		if len(cfgParts) > 0 {
-			fmt.Println(" " + strings.Join(cfgParts, cfgSep))
-		}
+	cfgSep := cfgSepStr()
+	var cfgParts []string
+	if isVisible("memory") && config.ClaudeMdCount > 0 {
+		cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d memory files", config.ClaudeMdCount)+th.Reset)
+	}
+	if isVisible("mcp") && config.McpCount > 0 {
+		cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d mcp", config.McpCount)+th.Reset)
+	}
+	if isVisible("hooks") && config.HooksCount > 0 {
+		cfgParts = append(cfgParts, th.Muted+fmt.Sprintf("%d hooks", config.HooksCount)+th.Reset)
+	}
+	if len(cfgParts) > 0 {
+		fmt.Println(" " + strings.Join(cfgParts, cfgSep))
 	}
 
 	// ── Line 3: Context Window Bar ──────────────────────────────────────────

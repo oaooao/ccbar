@@ -10,25 +10,47 @@ import (
 	"strings"
 )
 
-func main() {
-	// Parse --theme flag
-	for i, arg := range os.Args[1:] {
-		if arg == "--theme" && i+1 < len(os.Args)-1 {
-			switch os.Args[i+2] {
-			case "light":
-				th = lightTheme
-			case "dark":
-				th = darkTheme
-			}
-		} else if arg == "--theme=light" {
-			th = lightTheme
-		} else if arg == "--theme=dark" {
-			th = darkTheme
-		} else if arg == "--version" {
+func parseFlags() {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--version":
 			fmt.Println(formatVersion())
-			return
+			os.Exit(0)
+		case args[i] == "--theme" && i+1 < len(args):
+			i++
+			applyTheme(args[i])
+		case strings.HasPrefix(args[i], "--theme="):
+			applyTheme(strings.TrimPrefix(args[i], "--theme="))
+		case args[i] == "--locale" && i+1 < len(args):
+			i++
+			applyLocale(args[i])
+		case strings.HasPrefix(args[i], "--locale="):
+			applyLocale(strings.TrimPrefix(args[i], "--locale="))
 		}
 	}
+}
+
+func applyTheme(v string) {
+	switch v {
+	case "light":
+		th = lightTheme
+	case "dark":
+		th = darkTheme
+	}
+}
+
+func applyLocale(v string) {
+	switch v {
+	case "zh":
+		localeOverride = "zh"
+	case "en":
+		localeOverride = "en"
+	}
+}
+
+func main() {
+	parseFlags()
 
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil || len(input) == 0 {

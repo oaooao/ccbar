@@ -86,6 +86,28 @@ go install github.com/oaooao/ccbar@latest
 }
 ```
 
+### 语言设置
+
+日期时间格式默认根据系统 `LANG` 环境变量自动检测。如需手动指定：
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "ccbar --locale zh",
+    "refreshInterval": 3
+  }
+}
+```
+
+| 参数 | 时间格式 | 日期格式 |
+|------|---------|---------|
+| `--locale zh` | `15:00` | `4/18 15:00` |
+| `--locale en` | `3:00pm` | `Apr 18, 3:00pm` |
+| *（默认）* | 跟随系统 | |
+
+参数可以组合使用：`ccbar --theme light --locale zh`
+
 ## 更新
 
 ```bash

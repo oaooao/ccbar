@@ -86,6 +86,28 @@ If you use a light terminal background, add `--theme light`:
 }
 ```
 
+### Locale
+
+Date and time format is auto-detected from your system `LANG` environment variable. To override:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "ccbar --locale zh",
+    "refreshInterval": 3
+  }
+}
+```
+
+| Flag | Time format | Date format |
+|------|------------|-------------|
+| `--locale en` | `3:00pm` | `Apr 18, 3:00pm` |
+| `--locale zh` | `15:00` | `4/18 15:00` |
+| *(default)* | auto-detect from system | |
+
+Flags can be combined: `ccbar --theme light --locale zh`
+
 ## Update
 
 ```bash

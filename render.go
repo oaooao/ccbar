@@ -161,8 +161,18 @@ func formatDuration(ms float64) string {
 
 // ─── Locale-aware date/time formatting ───────────────────────────────────────
 
-// isZhLocale checks if the system locale is Chinese.
+// localeOverride is set by --locale flag. Empty means auto-detect.
+var localeOverride string
+
+// isZhLocale checks if the active locale is Chinese.
 func isZhLocale() bool {
+	switch localeOverride {
+	case "zh":
+		return true
+	case "en":
+		return false
+	}
+	// Auto-detect from system
 	for _, key := range []string{"LANG", "LC_TIME", "LC_ALL", "LANGUAGE"} {
 		if v := os.Getenv(key); strings.HasPrefix(v, "zh") {
 			return true

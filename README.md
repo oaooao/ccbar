@@ -4,17 +4,19 @@ A beautifully designed status line for [Claude Code](https://docs.anthropic.com/
 
 Single binary, zero dependencies, ~60ms startup. Built with Go.
 
-<!-- TODO: Add screenshots -->
+### Normal — everything healthy
+
+![Normal state](assets/normal.png)
+
+### Warning — resources getting warm
+
+![Warning state](assets/warning.png)
+
+### Critical — time to /save
+
+![Critical state](assets/critical.png)
 
 ## What it shows
-
-```
- Opus 4.6 (1M context) │ Axiom │ ⎇ master ~2 │ $3.17 │ 3h17m
- 2 memory files · 1 mcp · 4 hooks
- context  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 68%
- 5h       ▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 13%  ⟳ 1:00pm
- weekly   ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 73%  ⟳ Apr 18, 4:00am
-```
 
 **Line 1** — Model, project, git branch with staged/modified counts, session cost, duration
 

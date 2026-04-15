@@ -36,6 +36,7 @@ Single binary, zero dependencies, ~60ms startup. Built with Go.
 - **Zero dependencies** — Single Go binary, no runtime needed
 - **Light & dark themes** — Optimized color palettes for both terminal backgrounds
 - **Locale-aware dates** — Automatically uses 24h format and `4/18` style dates for Chinese locales, 12h AM/PM and `Apr 18` for others
+- **Customizable layout** — Hide any section with `--hide config,5h,weekly`
 
 ## Install
 
@@ -58,7 +59,19 @@ Download the binary for your platform from [Releases](https://github.com/oaooao/
 
 ## Configure
 
-Add this to your Claude Code settings (`~/.claude/settings.json`):
+### Quick setup
+
+Run the interactive setup to automatically configure Claude Code:
+
+```bash
+ccbar setup
+```
+
+This reads your existing `~/.claude/settings.json`, shows you exactly what will change, and asks for confirmation before writing.
+
+### Manual setup
+
+Or add this to your Claude Code settings (`~/.claude/settings.json`) manually:
 
 ```json
 {
@@ -106,7 +119,23 @@ Date and time format is auto-detected from your system `LANG` environment variab
 | `--locale zh` | `15:00` | `4/18 15:00` |
 | *(default)* | auto-detect from system | |
 
-Flags can be combined: `ccbar --theme light --locale zh`
+### Hide sections
+
+Hide any section you don't need:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "ccbar --hide 5h,weekly",
+    "refreshInterval": 3
+  }
+}
+```
+
+Available sections: `config`, `context`, `5h`, `weekly`
+
+All flags can be combined: `ccbar --theme light --locale zh --hide config`
 
 ## Update
 

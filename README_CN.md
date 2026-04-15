@@ -36,6 +36,7 @@
 - **零依赖** — 单个 Go 二进制，不需要任何运行时环境
 - **深色/浅色主题** — 针对深色和浅色终端背景分别优化了配色方案
 - **日期本地化** — 中文环境自动使用 24 小时制和 `4/18` 格式，英文环境使用 12 小时制和 `Apr 18` 格式
+- **自定义布局** — 通过 `--hide config,5h,weekly` 隐藏不需要的部分
 
 ## 安装
 
@@ -58,7 +59,19 @@ go install github.com/oaooao/ccbar@latest
 
 ## 配置
 
-在 Claude Code 的配置文件（`~/.claude/settings.json`）中添加：
+### 快速配置
+
+运行交互式设置，自动配置 Claude Code：
+
+```bash
+ccbar setup
+```
+
+程序会读取现有的 `~/.claude/settings.json`，清晰展示将要做的改动，确认后自动写入。
+
+### 手动配置
+
+或者手动在 Claude Code 配置文件（`~/.claude/settings.json`）中添加：
 
 ```json
 {
@@ -106,7 +119,23 @@ go install github.com/oaooao/ccbar@latest
 | `--locale en` | `3:00pm` | `Apr 18, 3:00pm` |
 | *（默认）* | 跟随系统 | |
 
-参数可以组合使用：`ccbar --theme light --locale zh`
+### 隐藏部分
+
+隐藏不需要的显示区域：
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "ccbar --hide 5h,weekly",
+    "refreshInterval": 3
+  }
+}
+```
+
+可隐藏的区域：`config`、`context`、`5h`、`weekly`
+
+所有参数可以组合使用：`ccbar --theme light --locale zh --hide config`
 
 ## 更新
 

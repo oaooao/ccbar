@@ -1,8 +1,6 @@
-<p align="right">
-  <a href="README.md">English</a> | <strong>中文</strong>
-</p>
-
 # ccbar
+
+**[English](README.md) | [中文](README_CN.md)**
 
 为 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 设计的高颜值状态栏。
 

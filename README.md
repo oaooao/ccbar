@@ -1,8 +1,6 @@
-<p align="right">
-  <strong>English</strong> | <a href="README_CN.md">中文</a>
-</p>
-
 # ccbar
+
+**[English](README.md) | [中文](README_CN.md)**
 
 A beautifully designed status line for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 

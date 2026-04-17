@@ -47,8 +47,10 @@ type ContextWindow struct {
 }
 
 type RateLimits struct {
-	FiveHour *RateLimit `json:"five_hour"`
-	SevenDay *RateLimit `json:"seven_day"`
+	FiveHour       *RateLimit `json:"five_hour"`
+	SevenDay       *RateLimit `json:"seven_day"`
+	SevenDayOpus   *RateLimit `json:"seven_day_opus"`
+	SevenDaySonnet *RateLimit `json:"seven_day_sonnet"`
 }
 
 type RateLimit struct {
@@ -74,8 +76,10 @@ type WorktreeInfo struct {
 
 // OAuthUsageResponse is the shape returned by the Anthropic usage API.
 type OAuthUsageResponse struct {
-	FiveHour *OAuthRateLimit `json:"five_hour"`
-	SevenDay *OAuthRateLimit `json:"seven_day"`
+	FiveHour       *OAuthRateLimit `json:"five_hour"`
+	SevenDay       *OAuthRateLimit `json:"seven_day"`
+	SevenDayOpus   *OAuthRateLimit `json:"seven_day_opus"`
+	SevenDaySonnet *OAuthRateLimit `json:"seven_day_sonnet"`
 }
 
 type OAuthRateLimit struct {

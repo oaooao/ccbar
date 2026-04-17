@@ -20,6 +20,11 @@ const (
 )
 
 // resolveRateLimits returns rate limit data, preferring stdin data with OAuth API fallback.
+//
+// Anthropic split the weekly bucket into three (seven_day / seven_day_opus /
+// seven_day_sonnet) — on Opus-heavy subscriptions legacy seven_day returns 0.
+// We pick the binding constraint (max utilization across all three buckets)
+// so "weekly" always reflects what will actually rate-limit the user.
 func resolveRateLimits(input *StatusInput) (fiveHour, sevenDay *ResolvedRateLimit) {
 	// Prefer stdin data
 	if input.RateLimits != nil {
@@ -29,12 +34,7 @@ func resolveRateLimits(input *StatusInput) (fiveHour, sevenDay *ResolvedRateLimi
 				ResetsAt:   time.Unix(int64(rl.ResetsAt), 0),
 			}
 		}
-		if rl := input.RateLimits.SevenDay; rl != nil {
-			sevenDay = &ResolvedRateLimit{
-				Percentage: rl.UsedPercentage,
-				ResetsAt:   time.Unix(int64(rl.ResetsAt), 0),
-			}
-		}
+		sevenDay = pickWeeklyFromStdin(input.RateLimits)
 		if fiveHour != nil || sevenDay != nil {
 			return
 		}
@@ -54,15 +54,54 @@ func resolveRateLimits(input *StatusInput) (fiveHour, sevenDay *ResolvedRateLimi
 			}
 		}
 	}
-	if usage.SevenDay != nil {
-		if t, err := time.Parse(time.RFC3339, usage.SevenDay.ResetsAt); err == nil {
-			sevenDay = &ResolvedRateLimit{
-				Percentage: usage.SevenDay.Utilization,
-				ResetsAt:   t,
-			}
+	sevenDay = pickWeeklyFromOAuth(usage)
+	return
+}
+
+// pickWeeklyFromStdin picks the binding weekly bucket from CC stdin payload.
+func pickWeeklyFromStdin(rl *RateLimits) *ResolvedRateLimit {
+	candidates := []*RateLimit{rl.SevenDay, rl.SevenDayOpus, rl.SevenDaySonnet}
+	var best *RateLimit
+	for _, c := range candidates {
+		if c == nil {
+			continue
+		}
+		if best == nil || c.UsedPercentage > best.UsedPercentage {
+			best = c
 		}
 	}
-	return
+	if best == nil {
+		return nil
+	}
+	return &ResolvedRateLimit{
+		Percentage: best.UsedPercentage,
+		ResetsAt:   time.Unix(int64(best.ResetsAt), 0),
+	}
+}
+
+// pickWeeklyFromOAuth picks the binding weekly bucket from the OAuth usage API.
+func pickWeeklyFromOAuth(u *OAuthUsageResponse) *ResolvedRateLimit {
+	candidates := []*OAuthRateLimit{u.SevenDay, u.SevenDayOpus, u.SevenDaySonnet}
+	var best *OAuthRateLimit
+	for _, c := range candidates {
+		if c == nil {
+			continue
+		}
+		if best == nil || c.Utilization > best.Utilization {
+			best = c
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, best.ResetsAt)
+	if err != nil {
+		return nil
+	}
+	return &ResolvedRateLimit{
+		Percentage: best.Utilization,
+		ResetsAt:   t,
+	}
 }
 
 // getOAuthUsage fetches rate limit data from the Anthropic API with caching and locking.

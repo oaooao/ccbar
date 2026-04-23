@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const tmpCachePrefix = "ccbar-oauth-tmp-"
+
 const (
 	oauthCacheTTL = 60 * time.Second
 	oauthLockTTL  = 30 * time.Second
@@ -109,6 +111,8 @@ func getOAuthUsage() *OAuthUsageResponse {
 	cacheFile := filepath.Join(os.TempDir(), "ccbar-oauth-usage.json")
 	lockFile := filepath.Join(os.TempDir(), "ccbar-oauth.lock")
 
+	cleanupOrphanTmpFiles(filepath.Dir(cacheFile))
+
 	// Check file cache
 	cached := readOAuthCache(cacheFile)
 	if cached != nil {
@@ -138,12 +142,49 @@ func getOAuthUsage() *OAuthUsageResponse {
 		return cached // stale-while-revalidate
 	}
 
-	// Write cache
+	// Write cache atomically
 	if data, err := json.Marshal(usage); err == nil {
-		_ = os.WriteFile(cacheFile, data, 0644)
+		writeCacheAtomic(cacheFile, data)
 	}
 
 	return usage
+}
+
+// writeCacheAtomic writes via temp file + rename so readers never see a half-written JSON.
+func writeCacheAtomic(cacheFile string, data []byte) {
+	dir := filepath.Dir(cacheFile)
+	f, err := os.CreateTemp(dir, tmpCachePrefix+"*.json")
+	if err != nil {
+		return
+	}
+	tmpPath := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(tmpPath)
+		return
+	}
+	if err := os.Rename(tmpPath, cacheFile); err != nil {
+		_ = os.Remove(tmpPath)
+	}
+}
+
+// cleanupOrphanTmpFiles removes leftover temp cache files from crashed writers.
+// The tmp prefix is disjoint from the real cache filename, so the real cache is never touched.
+func cleanupOrphanTmpFiles(dir string) {
+	matches, err := filepath.Glob(filepath.Join(dir, tmpCachePrefix+"*.json"))
+	if err != nil {
+		return
+	}
+	for _, p := range matches {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) > oauthLockTTL {
+			_ = os.Remove(p)
+		}
+	}
 }
 
 // getOAuthToken retrieves the OAuth token via three-level fallback.

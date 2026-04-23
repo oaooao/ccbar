@@ -21,46 +21,143 @@ const (
 	usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 )
 
-// resolveRateLimits returns rate limit data, preferring stdin data with OAuth API fallback.
+// oauthState classifies the trustworthiness of OAuth usage data for per-bucket selection.
+// See docs/rate-limit-refresh-spec.md for the full decision table.
+type oauthState int
+
+const (
+	oauthFresh       oauthState = iota // cache < TTL, or live API just succeeded
+	oauthStale                         // usable data exists but couldn't refresh
+	oauthUnavailable                   // no usable data at all
+)
+
+func (s oauthState) String() string {
+	switch s {
+	case oauthFresh:
+		return "fresh"
+	case oauthStale:
+		return "stale"
+	default:
+		return "unavailable"
+	}
+}
+
+// oauthReason is diagnostic only — resolvers must never branch on it.
+type oauthReason string
+
+const (
+	reasonCacheHit     oauthReason = "cache_hit"
+	reasonAPIOk        oauthReason = "api_ok"
+	reasonLockHeld     oauthReason = "lock_held"
+	reasonTokenMissing oauthReason = "token_missing"
+	reasonAPIFailed    oauthReason = "api_failed"
+)
+
+// oauthResult carries the outcome of getOAuthUsage.
 //
-// Anthropic split the weekly bucket into three (seven_day / seven_day_opus /
-// seven_day_sonnet) — on Opus-heavy subscriptions legacy seven_day returns 0.
-// We pick the binding constraint (max utilization across all three buckets)
-// so "weekly" always reflects what will actually rate-limit the user.
+// Bi-directional invariant (callers may rely on this):
+//
+//	state == oauthUnavailable  iff  usage == nil
+//	state == oauthFresh || oauthStale  ⇒  usage != nil
+type oauthResult struct {
+	usage        *OAuthUsageResponse
+	state        oauthState
+	reason       oauthReason
+	cacheCorrupt bool // debug-only marker; does not change reason
+}
+
+// resolveRateLimits picks rate limit data per-bucket, OAuth-primary with stdin fallback.
+//
+// OAuth (with its 60s cross-process file cache) is the cross-session source of truth.
+// stdin is a per-session local snapshot — used when OAuth is stale or unavailable.
+// Weekly bucket aggregation is same-source only; cross-source max would lock an
+// already-reset binding constraint onto the screen.
 func resolveRateLimits(input *StatusInput) (fiveHour, sevenDay *ResolvedRateLimit) {
-	// Prefer stdin data
-	if input.RateLimits != nil {
-		if rl := input.RateLimits.FiveHour; rl != nil {
-			fiveHour = &ResolvedRateLimit{
-				Percentage: rl.UsedPercentage,
-				ResetsAt:   time.Unix(int64(rl.ResetsAt), 0),
-			}
-		}
-		sevenDay = pickWeeklyFromStdin(input.RateLimits)
-		if fiveHour != nil || sevenDay != nil {
-			return
-		}
-	}
-
-	// Fallback: OAuth API
-	usage := getOAuthUsage()
-	if usage == nil {
-		return nil, nil
-	}
-
-	if usage.FiveHour != nil {
-		if t, err := time.Parse(time.RFC3339, usage.FiveHour.ResetsAt); err == nil {
-			fiveHour = &ResolvedRateLimit{
-				Percentage: usage.FiveHour.Utilization,
-				ResetsAt:   t,
-			}
-		}
-	}
-	sevenDay = pickWeeklyFromOAuth(usage)
+	r := getOAuthUsage()
+	fiveHour = resolveFiveHour(input, r)
+	sevenDay = resolveWeekly(input, r)
 	return
 }
 
-// pickWeeklyFromStdin picks the binding weekly bucket from CC stdin payload.
+// resolveFiveHour selects the 5-hour bucket from OAuth or stdin per the decision table.
+func resolveFiveHour(input *StatusInput, r oauthResult) *ResolvedRateLimit {
+	var o *ResolvedRateLimit
+	if r.usage != nil {
+		o = parseOAuthBucket(r.usage.FiveHour)
+	}
+	var s *ResolvedRateLimit
+	if input != nil && input.RateLimits != nil {
+		s = parseStdinBucket(input.RateLimits.FiveHour)
+	}
+	return pickBucket(r.state, o, s)
+}
+
+// resolveWeekly selects the weekly bucket. Aggregation is same-source only.
+func resolveWeekly(input *StatusInput, r oauthResult) *ResolvedRateLimit {
+	var o *ResolvedRateLimit
+	if r.usage != nil {
+		o = pickWeeklyFromOAuth(r.usage)
+	}
+	var s *ResolvedRateLimit
+	if input != nil && input.RateLimits != nil {
+		s = pickWeeklyFromStdin(input.RateLimits)
+	}
+	return pickBucket(r.state, o, s)
+}
+
+// pickBucket implements the per-bucket decision table.
+//
+// "o / s available" means the source-specific value was successfully parsed into
+// a *ResolvedRateLimit (not merely that the raw pointer was non-nil).
+//
+//	oauthFresh       + o → o
+//	oauthFresh       + !o + s → s
+//	oauthStale       + s → s  (product policy: local responsiveness over cross-session consistency)
+//	oauthStale       + !s + o → o
+//	oauthUnavailable + s → s  (invariant guarantees o is nil here)
+//	else → nil
+func pickBucket(state oauthState, o, s *ResolvedRateLimit) *ResolvedRateLimit {
+	switch state {
+	case oauthFresh:
+		if o != nil {
+			return o
+		}
+		return s
+	case oauthStale:
+		if s != nil {
+			return s
+		}
+		return o
+	default: // oauthUnavailable: usage is nil by invariant, so o is nil
+		return s
+	}
+}
+
+// parseOAuthBucket returns a parsed ResolvedRateLimit, or nil if the raw bucket
+// is nil or has an unparseable RFC3339 resets_at.
+func parseOAuthBucket(b *OAuthRateLimit) *ResolvedRateLimit {
+	if b == nil {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, b.ResetsAt)
+	if err != nil {
+		return nil
+	}
+	return &ResolvedRateLimit{Percentage: b.Utilization, ResetsAt: t}
+}
+
+// parseStdinBucket returns a parsed ResolvedRateLimit, or nil if the raw bucket is nil.
+func parseStdinBucket(b *RateLimit) *ResolvedRateLimit {
+	if b == nil {
+		return nil
+	}
+	return &ResolvedRateLimit{
+		Percentage: b.UsedPercentage,
+		ResetsAt:   time.Unix(int64(b.ResetsAt), 0),
+	}
+}
+
+// pickWeeklyFromStdin aggregates the weekly bucket within the stdin source (same-source max).
 func pickWeeklyFromStdin(rl *RateLimits) *ResolvedRateLimit {
 	candidates := []*RateLimit{rl.SevenDay, rl.SevenDayOpus, rl.SevenDaySonnet}
 	var best *RateLimit
@@ -72,16 +169,10 @@ func pickWeeklyFromStdin(rl *RateLimits) *ResolvedRateLimit {
 			best = c
 		}
 	}
-	if best == nil {
-		return nil
-	}
-	return &ResolvedRateLimit{
-		Percentage: best.UsedPercentage,
-		ResetsAt:   time.Unix(int64(best.ResetsAt), 0),
-	}
+	return parseStdinBucket(best)
 }
 
-// pickWeeklyFromOAuth picks the binding weekly bucket from the OAuth usage API.
+// pickWeeklyFromOAuth aggregates the weekly bucket within the OAuth source (same-source max).
 func pickWeeklyFromOAuth(u *OAuthUsageResponse) *ResolvedRateLimit {
 	candidates := []*OAuthRateLimit{u.SevenDay, u.SevenDayOpus, u.SevenDaySonnet}
 	var best *OAuthRateLimit
@@ -93,61 +184,78 @@ func pickWeeklyFromOAuth(u *OAuthUsageResponse) *ResolvedRateLimit {
 			best = c
 		}
 	}
-	if best == nil {
-		return nil
-	}
-	t, err := time.Parse(time.RFC3339, best.ResetsAt)
-	if err != nil {
-		return nil
-	}
-	return &ResolvedRateLimit{
-		Percentage: best.Utilization,
-		ResetsAt:   t,
-	}
+	return parseOAuthBucket(best)
 }
 
-// getOAuthUsage fetches rate limit data from the Anthropic API with caching and locking.
-func getOAuthUsage() *OAuthUsageResponse {
+// getOAuthUsage returns the oauthResult after checking cache, lock, token, and API.
+// See the decision table in docs/rate-limit-refresh-spec.md for full semantics.
+func getOAuthUsage() oauthResult {
 	cacheFile := filepath.Join(os.TempDir(), "ccbar-oauth-usage.json")
 	lockFile := filepath.Join(os.TempDir(), "ccbar-oauth.lock")
 
 	cleanupOrphanTmpFiles(filepath.Dir(cacheFile))
 
-	// Check file cache
-	cached := readOAuthCache(cacheFile)
-	if cached != nil {
-		if info, err := os.Stat(cacheFile); err == nil {
-			if time.Since(info.ModTime()) < oauthCacheTTL {
-				return cached
-			}
-		}
+	cached, age, corrupt := loadOAuthCache(cacheFile)
+	// Corrupt cache is treated as no cache — it never participates as stale data.
+	if corrupt {
+		cached = nil
 	}
 
-	// Try to acquire lock (non-blocking)
+	// Fresh cache hit
+	if cached != nil && age < oauthCacheTTL {
+		return oauthResult{usage: cached, state: oauthFresh, reason: reasonCacheHit, cacheCorrupt: corrupt}
+	}
+
+	// Need refresh. Non-blocking lock.
 	if !acquireLock(lockFile) {
-		// Another process is fetching — return stale cache
-		return cached
+		return staleOrUnavailable(cached, reasonLockHeld, corrupt)
 	}
 	defer releaseLock(lockFile)
 
-	// Get OAuth token
 	token := getOAuthToken()
 	if token == "" {
-		return cached // stale-while-revalidate
+		return staleOrUnavailable(cached, reasonTokenMissing, corrupt)
 	}
 
-	// Call API
 	usage := callUsageAPI(token)
 	if usage == nil {
-		return cached // stale-while-revalidate
+		return staleOrUnavailable(cached, reasonAPIFailed, corrupt)
 	}
 
-	// Write cache atomically
 	if data, err := json.Marshal(usage); err == nil {
 		writeCacheAtomic(cacheFile, data)
 	}
+	return oauthResult{usage: usage, state: oauthFresh, reason: reasonAPIOk, cacheCorrupt: corrupt}
+}
 
-	return usage
+// staleOrUnavailable builds an oauthResult preserving the bi-directional invariant.
+func staleOrUnavailable(cached *OAuthUsageResponse, reason oauthReason, corrupt bool) oauthResult {
+	if cached != nil {
+		return oauthResult{usage: cached, state: oauthStale, reason: reason, cacheCorrupt: corrupt}
+	}
+	return oauthResult{usage: nil, state: oauthUnavailable, reason: reason, cacheCorrupt: corrupt}
+}
+
+// loadOAuthCache reads the cache file and reports (data, age, corrupt).
+//
+//	corrupt = true  → file exists but JSON decode failed; caller treats as no cache
+//	corrupt = false + data == nil → file missing
+//	corrupt = false + data != nil → parsed successfully
+func loadOAuthCache(path string) (*OAuthUsageResponse, time.Duration, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, 0, false
+	}
+	age := time.Since(info.ModTime())
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, age, false
+	}
+	var u OAuthUsageResponse
+	if json.Unmarshal(data, &u) != nil {
+		return nil, age, true
+	}
+	return &u, age, false
 }
 
 // writeCacheAtomic writes via temp file + rename so readers never see a half-written JSON.
@@ -273,18 +381,6 @@ func callUsageAPI(token string) *OAuthUsageResponse {
 		return nil
 	}
 
-	return &usage
-}
-
-func readOAuthCache(path string) *OAuthUsageResponse {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var usage OAuthUsageResponse
-	if json.Unmarshal(data, &usage) != nil {
-		return nil
-	}
 	return &usage
 }
 

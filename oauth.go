@@ -18,8 +18,10 @@ const (
 	oauthCacheTTL = 60 * time.Second
 	oauthLockTTL  = 30 * time.Second
 	apiTimeout    = 5 * time.Second
-	usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 )
+
+// usageEndpoint is var (not const) so tests can point it at an httptest server.
+var usageEndpoint = "https://api.anthropic.com/api/oauth/usage"
 
 // oauthState classifies the trustworthiness of OAuth usage data for per-bucket selection.
 // See docs/rate-limit-refresh-spec.md for the full decision table.

@@ -74,13 +74,46 @@ type oauthResult struct {
 // already-reset binding constraint onto the screen.
 func resolveRateLimits(input *StatusInput) (fiveHour, sevenDay *ResolvedRateLimit) {
 	r := getOAuthUsage()
-	fiveHour = resolveFiveHour(input, r)
-	sevenDay = resolveWeekly(input, r)
+	fiveHour, fiveSrc := resolveFiveHour(input, r)
+	sevenDay, weeklySrc := resolveWeekly(input, r)
+	if debugEnabled() {
+		logDecision(r, fiveSrc, weeklySrc)
+	}
 	return
 }
 
+// debugEnabled returns true when CCBAR_DEBUG is set to any non-empty value.
+func debugEnabled() bool {
+	return os.Getenv("CCBAR_DEBUG") != ""
+}
+
+// logDecision writes a single JSON line to stderr describing how rate limits
+// were resolved. Gated by debugEnabled so the status line never leaks noise.
+func logDecision(r oauthResult, fiveSrc, weeklySrc bucketSource) {
+	entry := map[string]any{
+		"ts":                     time.Now().UTC().Format(time.RFC3339Nano),
+		"oauth_state":            r.state.String(),
+		"oauth_reason":           string(r.reason),
+		"cache_corrupt_detected": r.cacheCorrupt,
+		"five_hour_src":          string(fiveSrc),
+		"weekly_src":             string(weeklySrc),
+	}
+	if data, err := json.Marshal(entry); err == nil {
+		fmt.Fprintln(os.Stderr, string(data))
+	}
+}
+
+// bucketSource names which source produced the picked bucket.
+type bucketSource string
+
+const (
+	srcOAuth bucketSource = "oauth"
+	srcStdin bucketSource = "stdin"
+	srcNone  bucketSource = "none"
+)
+
 // resolveFiveHour selects the 5-hour bucket from OAuth or stdin per the decision table.
-func resolveFiveHour(input *StatusInput, r oauthResult) *ResolvedRateLimit {
+func resolveFiveHour(input *StatusInput, r oauthResult) (*ResolvedRateLimit, bucketSource) {
 	var o *ResolvedRateLimit
 	if r.usage != nil {
 		o = parseOAuthBucket(r.usage.FiveHour)
@@ -93,7 +126,7 @@ func resolveFiveHour(input *StatusInput, r oauthResult) *ResolvedRateLimit {
 }
 
 // resolveWeekly selects the weekly bucket. Aggregation is same-source only.
-func resolveWeekly(input *StatusInput, r oauthResult) *ResolvedRateLimit {
+func resolveWeekly(input *StatusInput, r oauthResult) (*ResolvedRateLimit, bucketSource) {
 	var o *ResolvedRateLimit
 	if r.usage != nil {
 		o = pickWeeklyFromOAuth(r.usage)
@@ -105,7 +138,7 @@ func resolveWeekly(input *StatusInput, r oauthResult) *ResolvedRateLimit {
 	return pickBucket(r.state, o, s)
 }
 
-// pickBucket implements the per-bucket decision table.
+// pickBucket implements the per-bucket decision table and reports the chosen source.
 //
 // "o / s available" means the source-specific value was successfully parsed into
 // a *ResolvedRateLimit (not merely that the raw pointer was non-nil).
@@ -116,20 +149,29 @@ func resolveWeekly(input *StatusInput, r oauthResult) *ResolvedRateLimit {
 //	oauthStale       + !s + o → o
 //	oauthUnavailable + s → s  (invariant guarantees o is nil here)
 //	else → nil
-func pickBucket(state oauthState, o, s *ResolvedRateLimit) *ResolvedRateLimit {
+func pickBucket(state oauthState, o, s *ResolvedRateLimit) (*ResolvedRateLimit, bucketSource) {
 	switch state {
 	case oauthFresh:
 		if o != nil {
-			return o
+			return o, srcOAuth
 		}
-		return s
+		if s != nil {
+			return s, srcStdin
+		}
+		return nil, srcNone
 	case oauthStale:
 		if s != nil {
-			return s
+			return s, srcStdin
 		}
-		return o
-	default: // oauthUnavailable: usage is nil by invariant, so o is nil
-		return s
+		if o != nil {
+			return o, srcOAuth
+		}
+		return nil, srcNone
+	default: // oauthUnavailable: invariant guarantees o is nil
+		if s != nil {
+			return s, srcStdin
+		}
+		return nil, srcNone
 	}
 }
 

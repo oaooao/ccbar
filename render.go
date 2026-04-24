@@ -45,27 +45,27 @@ var darkTheme = Theme{
 	Secondary:  "\x1b[38;5;246m",
 	Muted:      "\x1b[38;5;243m",
 	BarEmpty:   "\x1b[38;5;242m",
-	Label:      "\x1b[38;5;252m",  // same as Text in dark theme
+	Label:      "\x1b[38;5;252m", // same as Text in dark theme
 }
 
 var lightTheme = Theme{
 	Reset:      "\x1b[0m",
 	Bold:       "\x1b[1m",
-	White:      "\x1b[30m",          // black text on light bg
-	BoldWhite:  "\x1b[1;30m",       // bold black
-	Cyan:       "\x1b[38;5;30m",    // darker cyan
-	Green:      "\x1b[38;5;28m",    // darker green
-	Yellow:     "\x1b[38;5;130m",   // dark orange/amber
-	Red:        "\x1b[38;5;160m",   // darker red
+	White:      "\x1b[30m",       // black text on light bg
+	BoldWhite:  "\x1b[1;30m",     // bold black
+	Cyan:       "\x1b[38;5;30m",  // darker cyan
+	Green:      "\x1b[38;5;28m",  // darker green
+	Yellow:     "\x1b[38;5;130m", // dark orange/amber
+	Red:        "\x1b[38;5;160m", // darker red
 	BoldRed:    "\x1b[1;38;5;160m",
 	BoldYellow: "\x1b[1;38;5;130m",
-	Magenta:    "\x1b[38;5;90m",    // darker purple
-	BrightBlue: "\x1b[38;5;26m",   // darker blue
-	Text:       "\x1b[38;5;241m",   // percentage numbers — readable but lighter than labels
-	Secondary:  "\x1b[38;5;244m",   // reset times — tertiary info
-	Muted:      "\x1b[38;5;248m",   // config stats, separators
-	BarEmpty:   "\x1b[38;5;253m",   // empty bar portions — subtle but visible
-	Label:      "\x1b[38;5;244m",   // medium gray — visible but not heavy
+	Magenta:    "\x1b[38;5;90m",  // darker purple
+	BrightBlue: "\x1b[38;5;26m",  // darker blue
+	Text:       "\x1b[38;5;241m", // percentage numbers — readable but lighter than labels
+	Secondary:  "\x1b[38;5;244m", // reset times — tertiary info
+	Muted:      "\x1b[38;5;248m", // config stats, separators
+	BarEmpty:   "\x1b[38;5;253m", // empty bar portions — subtle but visible
+	Label:      "\x1b[38;5;244m", // medium gray — visible but not heavy
 }
 
 // Active theme — set in main() based on --theme flag.
@@ -187,6 +187,7 @@ func isZhLocale() bool {
 // formatResetTime formats a time for the 5h rate limit.
 // zh: "15:00"   en: "3:00pm"
 func formatResetTime(t time.Time) string {
+	t = t.Local()
 	if isZhLocale() {
 		return fmt.Sprintf("%d:%02d", t.Hour(), t.Minute())
 	}
@@ -206,6 +207,7 @@ func formatResetTime(t time.Time) string {
 // formatResetDateTime formats a time for the 7d rate limit.
 // zh: "4/18 15:00"   en: "Apr 18, 3:00pm"
 func formatResetDateTime(t time.Time) string {
+	t = t.Local()
 	if isZhLocale() {
 		return fmt.Sprintf("%d/%d %d:%02d", t.Month(), t.Day(), t.Hour(), t.Minute())
 	}

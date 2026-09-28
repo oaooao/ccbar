@@ -138,7 +138,10 @@ func main() {
 	}
 
 	projectName := filepath.Base(cwd)
-	modelName := data.Model.DisplayName
+	modelName := displayModelName(data.Model.DisplayName)
+	if modelName == "" {
+		modelName = displayModelName(data.Model.ID)
+	}
 	if modelName == "" {
 		modelName = "Unknown"
 	}
@@ -176,7 +179,9 @@ func main() {
 		if isDefaultModel {
 			line1Parts = append(line1Parts, th.Cyan+modelName+th.Reset)
 		} else {
-			line1Parts = append(line1Parts, th.BoldYellow+strings.ToUpper(modelName)+th.Reset)
+			// Bold yellow, not upper-cased: the name has to read exactly as the
+			// model is named ("DeepSeek V4.1 Flash", not "DEEPSEEK V4.1 FLASH").
+			line1Parts = append(line1Parts, th.BoldYellow+modelName+th.Reset)
 		}
 	}
 

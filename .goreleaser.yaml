@@ -51,7 +51,10 @@ brews:
     repository:
       owner: oaooao
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      # 部署密钥（只对 homebrew-tap 有写权限、不过期），2026-09-29 取代会过期的 HOMEBREW_TAP_TOKEN
+      git:
+        url: "git@github.com:oaooao/homebrew-tap.git"
+        private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
     homepage: "https://github.com/oaooao/ccbar"
     description: "A beautifully designed status line for Claude Code"
     install: |

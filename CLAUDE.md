@@ -14,6 +14,8 @@ GITHUB_TOKEN=$(gh auth token) goreleaser release --clean
 
 goreleaser 自动完成：编译 4 平台二进制 → 上传 GitHub Releases → 更新 homebrew-tap formula。
 
+推 tag 会触发 GitHub Actions 自动发版，一般不用在本机跑 goreleaser。更新 homebrew-tap 用的是部署密钥：`homebrew-tap` 仓库的 deploy key（可写）配 `ccbar` 仓库的 secret `HOMEBREW_TAP_DEPLOY_KEY`（私钥）。2026-09-29 取代了会过期的个人访问令牌 `HOMEBREW_TAP_TOKEN`。要换密钥：本机 `ssh-keygen -t ed25519` 生成一对，公钥 `gh repo deploy-key add <pub> -R oaooao/homebrew-tap --allow-write`，私钥 `gh secret set HOMEBREW_TAP_DEPLOY_KEY -R oaooao/ccbar < <私钥文件>`，然后删掉本地私钥和旧的 deploy key。
+
 ## 项目结构
 
 - `main.go` — 入口 + 5 行输出编排

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -15,6 +16,8 @@ import (
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+var base = time.Date(2026, 10, 19, 10, 0, 0, 0, time.UTC)
 
 func oauthBucket(pct float64, t time.Time) *OAuthRateLimit {
 	return &OAuthRateLimit{Utilization: pct, ResetsAt: t.UTC().Format(time.RFC3339)}
@@ -38,270 +41,255 @@ func makeStdin(fiveHour *RateLimit, weekly ...*RateLimit) *StatusInput {
 	return &StatusInput{RateLimits: rl}
 }
 
-func result(state oauthState, usage *OAuthUsageResponse) oauthResult {
-	return oauthResult{usage: usage, state: state, reason: reasonCacheHit}
+func obs(pct float64, resets time.Time) *observation {
+	return &observation{Percentage: pct, ResetsAt: resets}
 }
 
-// ---------------------------------------------------------------------------
-// A 组：策略层（resolveFiveHour / resolveWeekly）
-// ---------------------------------------------------------------------------
-
-func TestResolveFiveHour_FreshOAuthWins(t *testing.T) {
-	future := time.Now().Add(time.Hour)
-	r := result(oauthFresh, &OAuthUsageResponse{FiveHour: oauthBucket(80, future)})
-	in := makeStdin(stdinBucket(10, future))
-	got, src := resolveFiveHour(in, r)
-	if got == nil || got.Percentage != 80 {
-		t.Fatalf("expected OAuth (80), got %+v", got)
-	}
-	if src != srcOAuth {
-		t.Fatalf("src = %s, want oauth", src)
-	}
+// fakeAPI is the usage endpoint: it counts calls and answers with status
+// and usage, which tests change.
+type fakeAPI struct {
+	calls  atomic.Int32
+	mu     sync.Mutex
+	status int
+	usage  *OAuthUsageResponse
 }
 
-func TestResolveFiveHour_FreshOAuthMissingBucket_UsesStdin(t *testing.T) {
-	future := time.Now().Add(time.Hour)
-	r := result(oauthFresh, &OAuthUsageResponse{}) // FiveHour nil
-	in := makeStdin(stdinBucket(42, future))
-	got, src := resolveFiveHour(in, r)
-	if got == nil || got.Percentage != 42 {
-		t.Fatalf("expected stdin (42), got %+v", got)
-	}
-	if src != srcStdin {
-		t.Fatalf("src = %s, want stdin", src)
-	}
+func (f *fakeAPI) set(status int, usage *OAuthUsageResponse) {
+	f.mu.Lock()
+	f.status, f.usage = status, usage
+	f.mu.Unlock()
 }
 
-func TestResolveFiveHour_FreshOAuthMissing_NoStdin_Nil(t *testing.T) {
-	r := result(oauthFresh, &OAuthUsageResponse{})
-	got, src := resolveFiveHour(nil, r)
-	if got != nil {
-		t.Fatalf("expected nil, got %+v", got)
-	}
-	if src != srcNone {
-		t.Fatalf("src = %s, want none", src)
-	}
-}
-
-func TestResolveFiveHour_StaleOAuth_StdinWins(t *testing.T) {
-	future := time.Now().Add(time.Hour)
-	r := result(oauthStale, &OAuthUsageResponse{FiveHour: oauthBucket(90, future)})
-	in := makeStdin(stdinBucket(15, future))
-	got, src := resolveFiveHour(in, r)
-	// Product policy: stale OAuth defers to local stdin snapshot.
-	if got == nil || got.Percentage != 15 {
-		t.Fatalf("expected stdin (15), got %+v", got)
-	}
-	if src != srcStdin {
-		t.Fatalf("src = %s, want stdin", src)
-	}
-}
-
-func TestResolveFiveHour_StaleOAuth_NoStdin_UsesOAuth(t *testing.T) {
-	future := time.Now().Add(time.Hour)
-	r := result(oauthStale, &OAuthUsageResponse{FiveHour: oauthBucket(90, future)})
-	got, src := resolveFiveHour(nil, r)
-	if got == nil || got.Percentage != 90 {
-		t.Fatalf("expected stale OAuth (90), got %+v", got)
-	}
-	if src != srcOAuth {
-		t.Fatalf("src = %s, want oauth", src)
-	}
-}
-
-func TestResolveFiveHour_Unavailable_StdinWins(t *testing.T) {
-	future := time.Now().Add(time.Hour)
-	r := oauthResult{state: oauthUnavailable, reason: reasonTokenMissing} // usage nil by invariant
-	in := makeStdin(stdinBucket(33, future))
-	got, src := resolveFiveHour(in, r)
-	if got == nil || got.Percentage != 33 {
-		t.Fatalf("expected stdin (33), got %+v", got)
-	}
-	if src != srcStdin {
-		t.Fatalf("src = %s, want stdin", src)
-	}
-}
-
-func TestResolveFiveHour_Unavailable_NoStdin_Nil(t *testing.T) {
-	r := oauthResult{state: oauthUnavailable, reason: reasonTokenMissing}
-	got, src := resolveFiveHour(nil, r)
-	if got != nil {
-		t.Fatalf("expected nil, got %+v", got)
-	}
-	if src != srcNone {
-		t.Fatalf("src = %s, want none", src)
-	}
-}
-
-func TestResolveWeekly_FreshOAuth_SameSourceMax_NotCrossSource(t *testing.T) {
-	future := time.Now().Add(72 * time.Hour)
-	// OAuth low, stdin high. Cross-source max would pick stdin (90). Same-source picks OAuth.
-	r := result(oauthFresh, &OAuthUsageResponse{
-		SevenDay:       oauthBucket(20, future),
-		SevenDaySonnet: oauthBucket(30, future),
-	})
-	in := makeStdin(nil, stdinBucket(90, future))
-	got, src := resolveWeekly(in, r)
-	if got == nil || got.Percentage != 30 {
-		t.Fatalf("expected OAuth source max (30), got %+v", got)
-	}
-	if src != srcOAuth {
-		t.Fatalf("src = %s, want oauth", src)
-	}
-}
-
-func TestResolveFiveHour_OAuthResetsAtParseFail_FallsBackToStdin(t *testing.T) {
-	future := time.Now().Add(time.Hour)
-	bad := &OAuthRateLimit{Utilization: 99, ResetsAt: "not-a-date"}
-	r := result(oauthFresh, &OAuthUsageResponse{FiveHour: bad})
-	in := makeStdin(stdinBucket(11, future))
-	got, src := resolveFiveHour(in, r)
-	if got == nil || got.Percentage != 11 {
-		t.Fatalf("expected stdin fallback (11) on parse-fail, got %+v", got)
-	}
-	if src != srcStdin {
-		t.Fatalf("src = %s, want stdin", src)
-	}
-}
-
-func TestResolveFiveHourAndWeekly_IndependentSources(t *testing.T) {
-	// OAuth has only 5h, stdin has only weekly. Sources should diverge cleanly.
-	future := time.Now().Add(time.Hour)
-	r := result(oauthFresh, &OAuthUsageResponse{FiveHour: oauthBucket(55, future)})
-	in := makeStdin(nil, stdinBucket(77, future))
-	fh, fhSrc := resolveFiveHour(in, r)
-	wk, wkSrc := resolveWeekly(in, r)
-	if fh == nil || fh.Percentage != 55 || fhSrc != srcOAuth {
-		t.Fatalf("five-hour: got %+v src=%s, want 55 from oauth", fh, fhSrc)
-	}
-	if wk == nil || wk.Percentage != 77 || wkSrc != srcStdin {
-		t.Fatalf("weekly: got %+v src=%s, want 77 from stdin", wk, wkSrc)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// B 组：契约层（getOAuthUsage 状态机）
-// ---------------------------------------------------------------------------
-
-// isolateTempDir gives each test a fresh TMPDIR so cache/lock files don't collide.
-func isolateTempDir(t *testing.T) string {
+// env isolates a test: its own TMPDIR, Claude config (logged in as
+// account), token, endpoint and clock. It returns the endpoint, the clock
+// to move, and a function that logs in as another account.
+func env(t *testing.T, account string) (*fakeAPI, *time.Time, func(string)) {
 	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("TMPDIR", dir)
-	return dir
-}
-
-func clearOAuthEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-	// Block Keychain & credentials file fallback by pointing HOME at an empty dir.
+	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
-}
-
-func TestContract_LockHeld_NoCache_Unavailable(t *testing.T) {
-	dir := isolateTempDir(t)
-	clearOAuthEnv(t)
-	// Hold the lock by creating it fresh.
-	lockPath := filepath.Join(dir, "ccbar-oauth.lock")
-	if err := os.WriteFile(lockPath, nil, 0644); err != nil {
-		t.Fatal(err)
-	}
-	r := getOAuthUsage()
-	if r.state != oauthUnavailable || r.usage != nil || r.reason != reasonLockHeld {
-		t.Fatalf("got %+v, want {nil, unavailable, lock_held}", r)
-	}
-}
-
-func TestContract_TokenMissing_WithCache_Stale(t *testing.T) {
-	dir := isolateTempDir(t)
-	clearOAuthEnv(t)
-	// Plant a valid but stale cache (mtime old).
-	cachePath := filepath.Join(dir, "ccbar-oauth-usage.json")
-	cache := &OAuthUsageResponse{FiveHour: oauthBucket(12, time.Now().Add(time.Hour))}
-	data, _ := json.Marshal(cache)
-	if err := os.WriteFile(cachePath, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-	old := time.Now().Add(-5 * time.Minute)
-	if err := os.Chtimes(cachePath, old, old); err != nil {
-		t.Fatal(err)
-	}
-	r := getOAuthUsage()
-	if r.state != oauthStale || r.usage == nil || r.reason != reasonTokenMissing {
-		t.Fatalf("got %+v, want {usage!=nil, stale, token_missing}", r)
-	}
-}
-
-func TestContract_APIFailure_NoCache_Unavailable(t *testing.T) {
-	isolateTempDir(t)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
+	login := func(a string) {
+		data := fmt.Sprintf(`{"oauthAccount":{"accountUuid":%q,"emailAddress":"x@example.com","organizationUuid":"org"}}`, a)
+		if err := os.WriteFile(filepath.Join(cfg, ".claude.json"), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	login(account)
+
+	api := &fakeAPI{status: 500}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
+		api.calls.Add(1)
+		api.mu.Lock()
+		status, usage := api.status, api.usage
+		api.mu.Unlock()
+		w.WriteHeader(status)
+		if usage != nil {
+			_ = json.NewEncoder(w).Encode(usage)
+		}
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	old := usageEndpoint
 	usageEndpoint = srv.URL
-	defer func() { usageEndpoint = old }()
+	t.Cleanup(func() { usageEndpoint = old })
 
-	r := getOAuthUsage()
-	if r.state != oauthUnavailable || r.usage != nil || r.reason != reasonAPIFailed {
-		t.Fatalf("got %+v, want {nil, unavailable, api_failed}", r)
+	clock := base
+	oldNow := now
+	now = func() time.Time { return clock }
+	t.Cleanup(func() { now = oldNow })
+	return api, &clock, login
+}
+
+func pct(r *ResolvedRateLimit) float64 {
+	if r == nil {
+		return -1
+	}
+	return r.Percentage
+}
+
+// ---------------------------------------------------------------------------
+// A 组：观测合并（mergeObservations）
+// ---------------------------------------------------------------------------
+
+func TestMerge_SameWindowTakesHigherUsage(t *testing.T) {
+	w := base.Add(3 * time.Hour)
+	if got := mergeObservations(obs(40, w), obs(70, w.Add(time.Second)), base); got.Percentage != 70 {
+		t.Fatalf("got %v, want 70: usage only grows within a window", got.Percentage)
+	}
+	if got := mergeObservations(obs(70, w), obs(40, w), base); got.Percentage != 70 {
+		t.Fatalf("got %v, want 70 whichever comes first", got.Percentage)
 	}
 }
 
-func TestContract_CorruptCache_TreatedAsMissing(t *testing.T) {
-	dir := isolateTempDir(t)
-	clearOAuthEnv(t)
-	// Write half-truncated JSON — parse will fail.
-	cachePath := filepath.Join(dir, "ccbar-oauth-usage.json")
-	if err := os.WriteFile(cachePath, []byte(`{"five_hour": {"utiliza`), 0644); err != nil {
+func TestMerge_LaterWindowWinsWhateverItsUsage(t *testing.T) {
+	// A reset happened: the new window's 5% replaces the old window's 90%.
+	// (Taking the max across windows would lock a constraint that no
+	// longer exists on the screen.)
+	old, next := obs(90, base.Add(10*time.Minute)), obs(5, base.Add(5*time.Hour))
+	if got := mergeObservations(old, next, base); got != next {
+		t.Fatalf("got %+v, want the later window", got)
+	}
+	if got := mergeObservations(next, old, base); got != next {
+		t.Fatalf("got %+v, want the later window in either order", got)
+	}
+}
+
+func TestMerge_PastResetIsDropped(t *testing.T) {
+	past := obs(90, base.Add(-time.Minute))
+	if got := mergeObservations(past, nil, base); got != nil {
+		t.Fatalf("got %+v, want nil: the window is over", got)
+	}
+	cur := obs(3, base.Add(time.Hour))
+	if got := mergeObservations(past, cur, base); got != cur {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B 组：resolveRateLimits（共享、预算、账号）
+// ---------------------------------------------------------------------------
+
+// Session B sees what session A saw: they share observations through the
+// file, without asking the endpoint.
+func TestResolve_SessionsShareWhatTheySee(t *testing.T) {
+	api, _, _ := env(t, "acct-a")
+	w := base.Add(3 * time.Hour)
+	resolveRateLimits(makeStdin(stdinBucket(70, w), stdinBucket(30, base.Add(72*time.Hour))))
+	five, week := resolveRateLimits(makeStdin(stdinBucket(10, w), stdinBucket(12, base.Add(72*time.Hour))))
+	if pct(five) != 70 || pct(week) != 30 {
+		t.Fatalf("session B sees 5h %v weekly %v, want 70 and 30", pct(five), pct(week))
+	}
+	if n := api.calls.Load(); n != 1 {
+		t.Fatalf("%d endpoint calls, want 1 (the first, due)", n)
+	}
+}
+
+// A session left idle past its reset shows the window as not started,
+// not its old usage.
+func TestResolve_IdleSessionPastResetShowsNothing(t *testing.T) {
+	_, clock, _ := env(t, "acct-a")
+	resolveRateLimits(makeStdin(stdinBucket(88, base.Add(time.Hour))))
+	*clock = base.Add(2 * time.Hour)
+	five, _ := resolveRateLimits(makeStdin(stdinBucket(88, base.Add(time.Hour))))
+	if five != nil {
+		t.Fatalf("5h %+v after its reset, want nil (renders as —)", five)
+	}
+}
+
+// The endpoint sees usage no session saw (claude.ai, another machine).
+func TestResolve_EndpointTopsUp(t *testing.T) {
+	api, _, _ := env(t, "acct-a")
+	w := base.Add(3 * time.Hour)
+	api.set(200, &OAuthUsageResponse{FiveHour: oauthBucket(80, w)})
+	five, _ := resolveRateLimits(makeStdin(stdinBucket(40, w)))
+	if pct(five) != 80 {
+		t.Fatalf("5h %v, want the endpoint's 80", pct(five))
+	}
+}
+
+// Status lines refresh every 30s in each session. The endpoint allows each
+// account ~30 requests an hour, shared with every other tool: ccbar may
+// spend at most one every 10 minutes, however many sessions run.
+func TestResolve_EndpointAtMostEveryTenMinutes(t *testing.T) {
+	api, clock, _ := env(t, "acct-a")
+	w := base.Add(5 * time.Hour)
+	api.set(200, &OAuthUsageResponse{FiveHour: oauthBucket(10, w)})
+	for i := 0; i <= 60; i++ { // 30 minutes, three sessions every 30s
+		*clock = base.Add(time.Duration(i) * 30 * time.Second)
+		for range 3 {
+			resolveRateLimits(makeStdin(stdinBucket(5, w)))
+		}
+	}
+	if n := api.calls.Load(); n != 4 { // at 0, 10, 20 and 30 minutes
+		t.Fatalf("%d endpoint calls in 30 minutes, want 4", n)
+	}
+}
+
+func TestResolve_RateLimitedBacksOffFifteenMinutes(t *testing.T) {
+	api, clock, _ := env(t, "acct-a")
+	api.set(429, nil)
+	for i := 0; i <= 40; i++ { // 20 minutes
+		*clock = base.Add(time.Duration(i) * 30 * time.Second)
+		resolveRateLimits(makeStdin(stdinBucket(5, base.Add(5*time.Hour))))
+	}
+	if n := api.calls.Load(); n != 2 { // at 0 and 15 minutes
+		t.Fatalf("%d endpoint calls in 20 minutes of 429, want 2", n)
+	}
+}
+
+func TestResolve_FailureRetriesSoon(t *testing.T) {
+	api, clock, _ := env(t, "acct-a")
+	api.set(500, nil)
+	for i := 0; i <= 10; i++ { // 5 minutes
+		*clock = base.Add(time.Duration(i) * 30 * time.Second)
+		resolveRateLimits(nil)
+	}
+	if n := api.calls.Load(); n != 3 { // at 0, 2 and 4 minutes
+		t.Fatalf("%d endpoint calls in 5 minutes of 500, want 3", n)
+	}
+}
+
+// Another session holding the lock is calling: this one neither calls nor
+// pushes the schedule back.
+func TestResolve_LockHeldSkips(t *testing.T) {
+	api, _, _ := env(t, "acct-a")
+	api.set(200, &OAuthUsageResponse{})
+	if !acquireLock(limitsLock()) {
+		t.Fatal("lock")
+	}
+	resolveRateLimits(nil)
+	if n := api.calls.Load(); n != 0 {
+		t.Fatalf("%d calls with the lock held", n)
+	}
+	releaseLock(limitsLock())
+	resolveRateLimits(nil)
+	if n := api.calls.Load(); n != 1 {
+		t.Fatalf("%d calls after the lock went, want 1", n)
+	}
+}
+
+// Limits are an account's: after switching accounts (claude-swap), the
+// last account's usage must not show.
+func TestResolve_AccountsDoNotMix(t *testing.T) {
+	api, clock, login := env(t, "acct-a")
+	w := base.Add(3 * time.Hour)
+	api.set(200, &OAuthUsageResponse{FiveHour: oauthBucket(90, w)})
+	if five, _ := resolveRateLimits(nil); pct(five) != 90 {
+		t.Fatalf("account A 5h %v", pct(five))
+	}
+	login("acct-b")
+	*clock = base.Add(time.Minute)
+	api.set(200, &OAuthUsageResponse{FiveHour: oauthBucket(5, base.Add(4*time.Hour))})
+	if five, _ := resolveRateLimits(nil); pct(five) != 5 {
+		t.Fatalf("account B 5h %v, want its own 5", pct(five))
+	}
+	login("acct-a")
+	if five, _ := resolveRateLimits(nil); pct(five) != 90 {
+		t.Fatalf("back on account A 5h %v, want 90", pct(five))
+	}
+}
+
+func TestResolve_CorruptStoreStartsOver(t *testing.T) {
+	_, _, _ = env(t, "acct-a")
+	if err := os.WriteFile(limitsPath(), []byte(`{"accounts": {"acct-a/org": {"five_hour": {"pct": 9`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := time.Now().Add(-5 * time.Minute)
-	_ = os.Chtimes(cachePath, old, old)
-
-	r := getOAuthUsage()
-	// Corrupt cache never returns as stale. With no token, we must be unavailable.
-	if r.state != oauthUnavailable || r.usage != nil {
-		t.Fatalf("corrupt cache leaked as stale: got %+v", r)
-	}
-	if !r.cacheCorrupt {
-		t.Fatal("cacheCorrupt flag not set")
+	five, _ := resolveRateLimits(makeStdin(stdinBucket(12, base.Add(time.Hour))))
+	if pct(five) != 12 {
+		t.Fatalf("5h %v, want the session's 12", pct(five))
 	}
 }
 
-func TestContract_Invariant_NilIffUnavailable(t *testing.T) {
-	// Sweep all branches and assert: usage == nil  iff  state == oauthUnavailable.
-	branches := []func() oauthResult{
-		// fresh via cache hit
-		func() oauthResult {
-			dir := isolateTempDir(t)
-			cache := &OAuthUsageResponse{FiveHour: oauthBucket(1, time.Now().Add(time.Hour))}
-			data, _ := json.Marshal(cache)
-			_ = os.WriteFile(filepath.Join(dir, "ccbar-oauth-usage.json"), data, 0644)
-			return getOAuthUsage()
-		},
-		// lock_held no cache → unavailable
-		func() oauthResult {
-			dir := isolateTempDir(t)
-			clearOAuthEnv(t)
-			_ = os.WriteFile(filepath.Join(dir, "ccbar-oauth.lock"), nil, 0644)
-			return getOAuthUsage()
-		},
-		// token_missing no cache → unavailable
-		func() oauthResult {
-			isolateTempDir(t)
-			clearOAuthEnv(t)
-			return getOAuthUsage()
-		},
-	}
-	for i, b := range branches {
-		r := b()
-		unavailable := r.state == oauthUnavailable
-		nilUsage := r.usage == nil
-		if unavailable != nilUsage {
-			t.Fatalf("branch %d violates invariant: state=%v usage=%v", i, r.state, r.usage)
-		}
+// Weekly aggregates within a source (max of the seven-day buckets), then
+// merges across sources per window.
+func TestResolve_WeeklySameSourceMaxThenMerge(t *testing.T) {
+	api, _, _ := env(t, "acct-a")
+	w := base.Add(72 * time.Hour)
+	api.set(200, &OAuthUsageResponse{SevenDay: oauthBucket(20, w), SevenDayOpus: oauthBucket(35, w)})
+	_, week := resolveRateLimits(makeStdin(nil, stdinBucket(30, w)))
+	if pct(week) != 35 {
+		t.Fatalf("weekly %v, want 35", pct(week))
 	}
 }
 
@@ -311,7 +299,7 @@ func TestContract_Invariant_NilIffUnavailable(t *testing.T) {
 
 func TestWriteCacheAtomic_ConcurrentReadersSeeValidJSON(t *testing.T) {
 	dir := t.TempDir()
-	cacheFile := filepath.Join(dir, "ccbar-oauth-usage.json")
+	cacheFile := filepath.Join(dir, "ccbar-limits.json")
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -373,15 +361,15 @@ func TestWriteCacheAtomic_ConcurrentReadersSeeValidJSON(t *testing.T) {
 func TestCleanupOrphanTmpFiles(t *testing.T) {
 	dir := t.TempDir()
 	// Create one fresh tmp (should survive) and one old tmp (should be removed).
-	fresh := filepath.Join(dir, "ccbar-oauth-tmp-fresh.json")
-	old := filepath.Join(dir, "ccbar-oauth-tmp-old.json")
+	fresh := filepath.Join(dir, "ccbar-limits-tmp-fresh.json")
+	old := filepath.Join(dir, "ccbar-limits-tmp-old.json")
 	_ = os.WriteFile(fresh, []byte("{}"), 0644)
 	_ = os.WriteFile(old, []byte("{}"), 0644)
 	oldTime := time.Now().Add(-2 * oauthLockTTL)
 	_ = os.Chtimes(old, oldTime, oldTime)
 
 	// Also plant a file that MUST NOT be touched (wrong prefix).
-	bystander := filepath.Join(dir, "ccbar-oauth-usage.json")
+	bystander := filepath.Join(dir, "ccbar-limits.json")
 	_ = os.WriteFile(bystander, []byte("{}"), 0644)
 	_ = os.Chtimes(bystander, oldTime, oldTime)
 

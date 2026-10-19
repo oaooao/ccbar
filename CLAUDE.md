@@ -23,15 +23,18 @@ goreleaser 自动完成：编译 4 平台二进制 → 上传 GitHub Releases �
 - `render.go` — ANSI 颜色 + bar 渲染 + format helpers
 - `git.go` — git 信息 + 5s 文件缓存
 - `config.go` — CLAUDE.md/MCP/hooks 计数 + session 级缓存
-- `oauth.go` — OAuth token 链 + API 调用 + 60s 缓存 + lock
+- `limits.go` — Rate limit 观测合并：stdin 与用量接口的观测按窗口合并（同窗口取高、新窗口替旧、过 reset 丢弃），按账号跨 session 共享；用量接口最多 10 分钟一次，429 退避 15 分钟
+- `oauth.go` — OAuth token 链 + 用量接口调用 + lock + 原子写
 - `scripts/demo.sh` — 生成截图用的 mock 数据
 
 ## 缓存文件
 
 - `/tmp/ccbar-git-{sessionID}` — 5s TTL
 - `/tmp/ccbar-config-{sessionID}` — session 生命周期
-- `/tmp/ccbar-oauth-usage.json` — 60s TTL，跨 session 共享
-- `/tmp/ccbar-oauth.lock` — 防并发 API 调用
+- `$TMPDIR/ccbar-limits.json` — 按账号（`~/.claude.json` 的 oauthAccount）存 5h/weekly 观测与下次可调接口的时间，跨 session 共享
+- `$TMPDIR/ccbar-limits.lock` — 防并发 API 调用
+
+用量接口每个账号每小时约 28–30 次（claude-swap 实测，见其 `poll_policy.py`），与 claude-swap 等工具共用。ccbar 曾经每 60 秒调一次，把额度用光，让 claude-swap 整天 429：别再缩短 `apiRefreshEvery`。
 
 ## 分发
 

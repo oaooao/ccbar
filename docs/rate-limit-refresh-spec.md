@@ -1,5 +1,61 @@
 # Rate Limit Refresh — 设计 Spec
 
+状态：**v3（2026-10-19，取代 v2 的选源决策表）**。v2 原文保留在下方作为历史。
+
+## v3：观测合并，接口只做补充
+
+### 为什么推翻 v2
+
+v2 让用量接口成为"主真相源"，60 秒 TTL。实际后果：Claude Code 每个 session 每 30 秒刷新一次 status line，接口对每个账号的额度只有**每小时约 28–30 次**（claude-swap 实测，`poll_policy.py`），且与 claude-swap 等其他工具共用。ccbar 一小时最多 60 次，单它就把额度用光：2026-10-19 当天活跃账号从早上起几乎每次都是 429，claude-swap 拿不到新用量，Claude Accounts 菜单栏显示 4%，实际约 70%；ccbar 自己也大多落在 stale 分支。
+
+v2 要解决的两个问题（多 session 不同步、挂机 session 过了 reset 仍显示旧值）是对的，但不需要高频调接口就能解决。
+
+### 核心：观测可以无序合并
+
+stdin 的 `rate_limits` 和接口返回值都是对**某个账号某个窗口**的一次观测。两条事实让任意两条观测不需要知道谁更新就能合并：
+
+1. 同一个窗口内用量只增不减 → **同窗口取较高值**
+2. 新窗口取代旧窗口 → **resets_at 更晚的窗口胜出**（不论数值，避免把已不存在的约束锁在屏幕上——v2"不跨源取 max"的原则在这里由窗口规则表达）
+3. 已过 resets_at 的观测作废 → 丢弃；没有更新的观测时显示 `—`（窗口未开始）
+
+判断"同一窗口"容差 2 分钟（stdin 是 epoch 秒，接口是带小数秒的 RFC3339）。
+
+### 跨 session 共享
+
+每次运行把本 session 的 stdin 观测合并进 `$TMPDIR/ccbar-limits.json`，再读出合并结果。session B 看得到 session A 的更高用量，不需要调接口。合并是交换、幂等的，并发写丢一次更新也会在下一次刷新（30 秒后）补回，不加锁。
+
+### 按账号分开
+
+存储按 `~/.claude.json`（或 `$CLAUDE_CONFIG_DIR/.claude.json`）的 `oauthAccount.accountUuid/organizationUuid` 分键。claude-swap 切换账号后不会显示上一个账号的用量（v2 的缓存不分账号）。已知局限：切换前启动、尚未重启的 session 仍用旧 token，其 stdin 会记到新账号名下；claude-swap 切换时会提示重启 session。
+
+### 用量接口：低频补充
+
+接口能看到 stdin 看不到的用量（claude.ai 网页、其他机器）。调度记在共享文件里，所有 session 共同遵守：
+
+| 结果 | 下次可调 |
+|---|---|
+| 200 | 10 分钟后（每账号每小时最多 6 次） |
+| 429 | 15 分钟后（额度随最近一小时的请求老化才恢复，早问只会再花掉） |
+| 网络错误 / 其他状态 / token 缺失 | 2 分钟后 |
+| 锁被别的 session 占用 | 不调，不改调度 |
+
+接口结果同样按窗口规则合并，不享有优先权。
+
+### 不变的
+
+- weekly 先在**同一来源内**对 seven_day / opus / sonnet 取 max，再跨来源按窗口合并
+- token 三级 fallback、原子写、孤儿 tmp 清理、`CCBAR_DEBUG`（日志字段改为 account / api / five_hour / weekly）
+- 渲染层
+
+### 测试
+
+`oauth_test.go`：合并规则（同窗取高、新窗替旧、过期丢弃）；session 共享；挂机过 reset 显示 `—`；接口补充；30 分钟三个 session 每 30 秒刷新只调 4 次；429 退避 15 分钟；失败 2 分钟重试；锁被占不调不改调度；账号不混；共享文件损坏重来；weekly 同源 max 再合并；并发原子写；孤儿 tmp 清理。
+
+---
+
+# v2（历史）
+
+
 状态：v2（Codex 第二轮 review 反馈已吸收，待 approval）
 作者：Leo（Claude）+ Codex 交叉评审
 关联代码：`oauth.go`、`types.go`、`main.go`（渲染侧不改）

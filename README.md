@@ -31,7 +31,7 @@ Single binary, zero dependencies, ~60ms startup. Built with Go.
 ## Features
 
 - **Instant rate limits** — OAuth fallback fetches rate limit data from macOS Keychain + Anthropic API, so you see 5h/7d usage immediately without waiting for the first interaction
-- **Smart caching** — Git info cached 5s, config stats cached per session; rate limits shared across sessions per account, the usage API asked at most every 10 minutes (it allows each account ~30 requests an hour, shared with other tools)
+- **Smart caching** — Git info from one lock-free `git status` per repo, cached 5s and shared by the sessions in that repo; config stats cached per session; rate limits shared across sessions per account, the usage API asked at most every 10 minutes (it allows each account ~30 requests an hour, shared with other tools). Caches live in their own directory, `$TMPDIR/ccbar/`, so a render never lists the shared temp dir, however full other programs leave it
 - **Color-coded alerts** — Bars shift from calm (cyan/blue) → warning (yellow) → critical (red) as resources deplete
 - **Zero dependencies** — Single Go binary, no runtime needed
 - **Light & dark themes** — Optimized color palettes for both terminal backgrounds

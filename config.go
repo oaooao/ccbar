@@ -8,7 +8,7 @@ import (
 
 // getConfigStats counts CLAUDE.md files, MCP servers, and hooks with session-level caching.
 func getConfigStats(cwd, sessionID string) ConfigStats {
-	cacheFile := filepath.Join(os.TempDir(), "ccbar-config-"+sessionID)
+	cacheFile := cachePath("config-" + sessionID + ".json")
 
 	// Session-level cache (no TTL — valid for entire session)
 	if data, err := os.ReadFile(cacheFile); err == nil {
@@ -88,7 +88,7 @@ func getConfigStats(cwd, sessionID string) ConfigStats {
 
 	// Write cache
 	if data, err := json.Marshal(stats); err == nil {
-		_ = os.WriteFile(cacheFile, data, 0644)
+		writeCacheAtomic(cacheFile, data)
 	}
 
 	return stats

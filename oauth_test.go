@@ -358,30 +358,45 @@ func TestWriteCacheAtomic_ConcurrentReadersSeeValidJSON(t *testing.T) {
 	}
 }
 
-func TestCleanupOrphanTmpFiles(t *testing.T) {
-	dir := t.TempDir()
-	// Create one fresh tmp (should survive) and one old tmp (should be removed).
-	fresh := filepath.Join(dir, "ccbar-limits-tmp-fresh.json")
-	old := filepath.Join(dir, "ccbar-limits-tmp-old.json")
-	_ = os.WriteFile(fresh, []byte("{}"), 0644)
-	_ = os.WriteFile(old, []byte("{}"), 0644)
-	oldTime := time.Now().Add(-2 * oauthLockTTL)
-	_ = os.Chtimes(old, oldTime, oldTime)
-
-	// Also plant a file that MUST NOT be touched (wrong prefix).
-	bystander := filepath.Join(dir, "ccbar-limits.json")
-	_ = os.WriteFile(bystander, []byte("{}"), 0644)
-	_ = os.Chtimes(bystander, oldTime, oldTime)
-
-	cleanupOrphanTmpFiles(dir)
-
-	if _, err := os.Stat(fresh); err != nil {
-		t.Fatalf("fresh tmp incorrectly removed: %v", err)
+// Housekeeping removes orphan temp files and long-gone sessions' caches,
+// leaves fresh files and the shared limits alone, and lists the directory
+// at most once per housekeepEvery.
+func TestHousekeep(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	t0 := time.Now()
+	plant := func(name string, age time.Duration) string {
+		p := cachePath(name)
+		_ = os.WriteFile(p, []byte("{}"), 0o600)
+		_ = os.Chtimes(p, t0.Add(-age), t0.Add(-age))
+		return p
 	}
-	if _, err := os.Stat(old); !os.IsNotExist(err) {
-		t.Fatalf("old tmp not removed: err=%v", err)
+	freshTmp := plant(tmpCachePrefix+"fresh.json", 0)
+	oldTmp := plant(tmpCachePrefix+"old.json", 2*oauthLockTTL)
+	liveGit := plant("git-live.json", time.Hour)
+	goneGit := plant("git-gone.json", staleCacheAge+time.Hour)
+	goneConfig := plant("config-gone.json", staleCacheAge+time.Hour)
+	limits := plant("limits.json", staleCacheAge+time.Hour)
+
+	housekeep(t0)
+	for _, p := range []string{freshTmp, liveGit, limits} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s removed: %v", filepath.Base(p), err)
+		}
 	}
-	if _, err := os.Stat(bystander); err != nil {
-		t.Fatalf("real cache (bystander) was deleted — glob matched too broadly: %v", err)
+	for _, p := range []string{oldTmp, goneGit, goneConfig} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s kept: err=%v", filepath.Base(p), err)
+		}
+	}
+
+	// Within the hour the next render skips housekeeping.
+	again := plant("git-gone-again.json", staleCacheAge+time.Hour)
+	housekeep(t0.Add(housekeepEvery / 2))
+	if _, err := os.Stat(again); err != nil {
+		t.Errorf("housekept again within %v: %v", housekeepEvery, err)
+	}
+	housekeep(t0.Add(housekeepEvery + time.Minute))
+	if _, err := os.Stat(again); !os.IsNotExist(err) {
+		t.Errorf("not housekept after %v: err=%v", housekeepEvery, err)
 	}
 }

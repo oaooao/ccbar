@@ -1,73 +1,109 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
 
 const gitCacheTTL = 5 * time.Second
 
-// getGitInfo returns branch, staged, and modified file counts with file-based caching.
-func getGitInfo(cwd, sessionID string) *GitInfo {
-	cacheFile := filepath.Join(os.TempDir(), "ccbar-git-"+sessionID)
+// gitCache is what a render saw of a directory; Info is nil outside a repo.
+type gitCache struct {
+	Info *GitInfo `json:"info"`
+}
 
-	// Check cache
-	if info, err := os.Stat(cacheFile); err == nil {
-		if time.Since(info.ModTime()) < gitCacheTTL {
-			if data, err := os.ReadFile(cacheFile); err == nil {
-				var gi GitInfo
-				if json.Unmarshal(data, &gi) == nil {
-					return &gi
-				}
-			}
+// getGitInfo returns branch, staged, and modified file counts of the repo at
+// cwd, or nil outside a repo. The cache is per directory, so sessions in one
+// repo share a git call; when git fails or times out, the last answer stands.
+func getGitInfo(cwd string) *GitInfo {
+	cacheFile := cachePath("git-" + hashKey(cwd) + ".json")
+
+	var cached *gitCache
+	if data, err := os.ReadFile(cacheFile); err == nil {
+		var c gitCache
+		if json.Unmarshal(data, &c) == nil {
+			cached = &c
+		}
+	}
+	if cached != nil {
+		if info, err := os.Stat(cacheFile); err == nil && time.Since(info.ModTime()) < gitCacheTTL {
+			return cached.Info
 		}
 	}
 
-	// Check if inside a git repo
-	cmd := exec.Command("git", "-C", cwd, "rev-parse", "--git-dir")
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return nil
+	gi, err := readGitStatus(cwd)
+	if err != nil {
+		if cached == nil {
+			return nil
+		}
+		t := time.Now()
+		_ = os.Chtimes(cacheFile, t, t) // retry after the TTL, not every render
+		return cached.Info
 	}
-
-	gi := &GitInfo{}
-
-	// Branch name
-	if out, err := gitExec(cwd, "branch", "--show-current"); err == nil && out != "" {
-		gi.Branch = out
-	} else if out, err := gitExec(cwd, "rev-parse", "--short", "HEAD"); err == nil {
-		gi.Branch = out
+	if data, err := json.Marshal(gitCache{Info: gi}); err == nil {
+		writeCacheAtomic(cacheFile, data)
 	}
-
-	// Staged files
-	if out, err := gitExec(cwd, "diff", "--cached", "--numstat"); err == nil && out != "" {
-		gi.Staged = len(strings.Split(strings.TrimSpace(out), "\n"))
-	}
-
-	// Modified files
-	if out, err := gitExec(cwd, "diff", "--numstat"); err == nil && out != "" {
-		gi.Modified = len(strings.Split(strings.TrimSpace(out), "\n"))
-	}
-
-	// Write cache
-	if data, err := json.Marshal(gi); err == nil {
-		_ = os.WriteFile(cacheFile, data, 0644)
-	}
-
 	return gi
 }
 
-func gitExec(cwd string, args ...string) (string, error) {
-	fullArgs := append([]string{"-C", cwd}, args...)
-	cmd := exec.Command("git", fullArgs...)
-	cmd.Stderr = nil
+// readGitStatus asks git once. --no-optional-locks keeps it off index.lock,
+// which a status line refreshing the index would otherwise take from under
+// the git commands of the agent it reports on; -uno skips scanning for
+// untracked files, which the counts don't include. A nil GitInfo with a nil
+// error means cwd is not in a repo.
+func readGitStatus(cwd string) (*GitInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), subprocessTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "--no-optional-locks", "-C", cwd,
+		"status", "--porcelain=v2", "--branch", "--untracked-files=no")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		var exit *exec.ExitError
+		if ctx.Err() == nil && errors.As(err, &exit) {
+			return nil, nil // git ran and said no: not a repo
+		}
+		return nil, err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return parseGitStatus(string(out)), nil
+}
+
+// parseGitStatus reads `git status --porcelain=v2 --branch`: the branch,
+// or the short commit when detached; files with staged changes; files with
+// unstaged changes, conflicts included.
+func parseGitStatus(out string) *GitInfo {
+	gi := &GitInfo{}
+	var head, oid string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "# branch.head "):
+			head = strings.TrimPrefix(line, "# branch.head ")
+		case strings.HasPrefix(line, "# branch.oid "):
+			oid = strings.TrimPrefix(line, "# branch.oid ")
+		case strings.HasPrefix(line, "1 "), strings.HasPrefix(line, "2 "):
+			if len(line) < 4 {
+				continue
+			}
+			if line[2] != '.' {
+				gi.Staged++
+			}
+			if line[3] != '.' {
+				gi.Modified++
+			}
+		case strings.HasPrefix(line, "u "):
+			gi.Modified++
+		}
+	}
+	gi.Branch = head
+	if head == "(detached)" {
+		gi.Branch = ""
+		if len(oid) >= 7 {
+			gi.Branch = oid[:7]
+		}
+	}
+	return gi
 }

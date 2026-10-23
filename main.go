@@ -165,7 +165,7 @@ func main() {
 	}
 
 	// Gather data
-	gitInfo := getGitInfo(cwd, sessionID)
+	gitInfo := getGitInfo(cwd)
 	config := getConfigStats(cwd, sessionID)
 	fiveHour, sevenDay := resolveRateLimits(&data)
 
@@ -271,4 +271,6 @@ func main() {
 				label("weekly"), rateBar(0, rateBarW), th.Muted, th.Reset)
 		}
 	}
+
+	housekeep(now())
 }

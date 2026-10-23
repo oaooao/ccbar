@@ -12,11 +12,15 @@ import (
 	"time"
 )
 
-const tmpCachePrefix = "ccbar-limits-tmp-"
+// tmpCachePrefix names the temp files of atomic writes in cacheDir.
+const tmpCachePrefix = "tmp-"
 
 const (
 	oauthLockTTL = 30 * time.Second
 	apiTimeout   = 5 * time.Second
+	// subprocessTimeout bounds every command a render runs (git, security),
+	// so a hung command can't hang the status line.
+	subprocessTimeout = 2 * time.Second
 )
 
 // usageEndpoint is var (not const) so tests can point it at an httptest server.
@@ -91,24 +95,6 @@ func writeCacheAtomic(cacheFile string, data []byte) {
 	}
 }
 
-// cleanupOrphanTmpFiles removes leftover temp cache files from crashed writers.
-// The tmp prefix is disjoint from the real cache filename, so the real cache is never touched.
-func cleanupOrphanTmpFiles(dir string) {
-	matches, err := filepath.Glob(filepath.Join(dir, tmpCachePrefix+"*.json"))
-	if err != nil {
-		return
-	}
-	for _, p := range matches {
-		info, err := os.Stat(p)
-		if err != nil {
-			continue
-		}
-		if time.Since(info.ModTime()) > oauthLockTTL {
-			_ = os.Remove(p)
-		}
-	}
-}
-
 // getOAuthToken retrieves the OAuth token via three-level fallback.
 func getOAuthToken() string {
 	// 1. Environment variable
@@ -117,7 +103,9 @@ func getOAuthToken() string {
 	}
 
 	// 2. macOS Keychain
-	if out, err := exec.Command("security", "find-generic-password",
+	ctx, cancel := context.WithTimeout(context.Background(), subprocessTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "security", "find-generic-password",
 		"-s", "Claude Code-credentials", "-w").Output(); err == nil {
 		token := parseCredentialToken(out)
 		if token != "" {

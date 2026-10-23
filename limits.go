@@ -105,8 +105,8 @@ type limitsStore struct {
 	Accounts map[string]*accountLimits `json:"accounts"`
 }
 
-func limitsPath() string { return filepath.Join(os.TempDir(), "ccbar-limits.json") }
-func limitsLock() string { return filepath.Join(os.TempDir(), "ccbar-limits.lock") }
+func limitsPath() string { return cachePath("limits.json") }
+func limitsLock() string { return cachePath("limits.lock") }
 
 func loadLimits() *limitsStore {
 	s := &limitsStore{}
@@ -220,7 +220,6 @@ func nextAPI(o apiOutcome, t time.Time) time.Time {
 // with nothing newer), which renders as "—".
 func resolveRateLimits(input *StatusInput) (fiveHour, sevenDay *ResolvedRateLimit) {
 	t := now()
-	cleanupOrphanTmpFiles(os.TempDir())
 	key := currentAccount()
 	sFive, sWeekly := stdinObservations(input)
 
